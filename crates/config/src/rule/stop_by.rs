@@ -130,6 +130,14 @@ impl StopBy {
     }
   }
 
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    match self {
+      StopBy::Rule(rule) => rule.used_compare_vars(),
+      StopBy::End => HashSet::new(),
+      StopBy::Neighbor => HashSet::new(),
+    }
+  }
+
   pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
     match self {
       StopBy::Rule(rule) => rule.verify_util(),

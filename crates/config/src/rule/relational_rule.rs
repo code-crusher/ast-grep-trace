@@ -76,6 +76,15 @@ impl Inside {
       .collect()
   }
 
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    self
+      .outer
+      .used_compare_vars()
+      .union(&self.stop_by.used_compare_vars())
+      .copied()
+      .collect()
+  }
+
   pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
     self.outer.verify_util()?;
     self.stop_by.verify_util()
@@ -146,6 +155,15 @@ impl Has {
       .inner
       .defined_vars()
       .union(&self.stop_by.defined_vars())
+      .copied()
+      .collect()
+  }
+
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    self
+      .inner
+      .used_compare_vars()
+      .union(&self.stop_by.used_compare_vars())
       .copied()
       .collect()
   }
@@ -233,6 +251,15 @@ impl Precedes {
       .collect()
   }
 
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    self
+      .later
+      .used_compare_vars()
+      .union(&self.stop_by.used_compare_vars())
+      .copied()
+      .collect()
+  }
+
   pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
     self.later.verify_util()?;
     self.stop_by.verify_util()
@@ -285,6 +312,15 @@ impl Follows {
       .former
       .defined_vars()
       .union(&self.stop_by.defined_vars())
+      .copied()
+      .collect()
+  }
+
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    self
+      .former
+      .used_compare_vars()
+      .union(&self.stop_by.used_compare_vars())
       .copied()
       .collect()
   }

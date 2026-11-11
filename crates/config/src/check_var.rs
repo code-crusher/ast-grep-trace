@@ -62,6 +62,9 @@ fn check_utils_defined(rule: &RuleCore) -> RResult<()> {
 
 fn check_vars(rule: &RuleCore) -> RResult<HashSet<&str>> {
   let vars = get_vars_from_rules(rule);
+  // compare rules in the main rule section reference sibling vars, which are
+  // bound before constraints run, so validate against main-rule vars only
+  check_compare_vars(&vars, std::iter::once(&rule.rule))?;
   let vars = check_var_in_constraints(vars, &rule.constraints)?;
   check_var_in_transform(vars, &rule.transform)
 }
@@ -92,7 +95,24 @@ fn check_var_in_constraints<'r>(
       ));
     }
   }
+  check_compare_vars(&vars, constraints.values())?;
   Ok(vars)
+}
+
+/// `compare` rules reference meta variables defined elsewhere; a referenced
+/// but undefined variable would silently never match, so validate them here.
+fn check_compare_vars<'r, I: Iterator<Item = &'r Rule>>(
+  vars: &HashSet<&'r str>,
+  rules: I,
+) -> RResult<()> {
+  for rule in rules {
+    for var in rule.used_compare_vars() {
+      if !vars.contains(var) {
+        return Err(RuleCoreError::UndefinedMetaVar(var.to_owned(), "compare"));
+      }
+    }
+  }
+  Ok(())
 }
 
 fn check_var_in_transform<'r>(

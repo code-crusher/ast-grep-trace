@@ -1,3 +1,4 @@
+mod compare;
 mod deserialize_env;
 mod nth_child;
 mod parameterized_util;
@@ -15,6 +16,7 @@ pub use selector::{SelectorError, parse_selector};
 pub use stop_by::StopBy;
 
 use crate::maybe::Maybe;
+use compare::{Compare, SerializableCompare};
 use nth_child::{NthChild, NthChildError, SerializableNthChild};
 use range::{RangeMatcher, RangeMatcherError, SerializableRange};
 use referent_rule::{ReferentRule, ReferentRuleError};
@@ -57,6 +59,10 @@ pub struct SerializableRule {
   /// A Rust regular expression to match the node's text. https://docs.rs/regex/latest/regex/#syntax
   #[serde(default, skip_serializing_if = "Maybe::is_absent")]
   pub regex: Maybe<String>,
+  /// `compare` matches a node whose text equals a meta variable's text.
+  /// An optional `source` regex extracts the text before comparison.
+  #[serde(default, skip_serializing_if = "Maybe::is_absent")]
+  pub compare: Maybe<SerializableCompare>,
   /// `nth_child` accepts number, string or object.
   /// It specifies the position in nodes' sibling list.
   #[serde(default, skip_serializing_if = "Maybe::is_absent", rename = "nthChild")]
@@ -121,6 +127,7 @@ impl SerializableRule {
         pattern: self.pattern.into(),
         kind: self.kind.into(),
         regex: self.regex.into(),
+        compare: self.compare.into(),
         nth_child: self.nth_child.into(),
         range: self.range.into(),
       },
@@ -144,6 +151,7 @@ pub struct AtomicRule {
   pub pattern: Option<PatternStyle>,
   pub kind: Option<String>,
   pub regex: Option<String>,
+  pub compare: Option<SerializableCompare>,
   pub nth_child: Option<SerializableNthChild>,
   pub range: Option<SerializableRange>,
 }
@@ -229,6 +237,7 @@ pub enum Rule {
   Pattern(Pattern),
   Kind(KindMatcher),
   Regex(RegexMatcher),
+  Compare(Compare),
   NthChild(NthChild),
   Range(RangeMatcher),
   // relational
@@ -260,6 +269,7 @@ impl Rule {
       Rule::Pattern(p) => p.defined_vars(),
       Rule::Kind(_) => HashSet::new(),
       Rule::Regex(_) => HashSet::new(),
+      Rule::Compare(_) => HashSet::new(),
       Rule::NthChild(n) => n.defined_vars(),
       Rule::Range(_) => HashSet::new(),
       Rule::Has(c) => c.defined_vars(),
@@ -273,12 +283,41 @@ impl Rule {
     }
   }
 
+  /// Collects the meta variables referenced by `compare` rules.
+  /// These variables must be defined elsewhere in the rule.
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    match self {
+      Rule::Compare(c) => HashSet::from([c.used_vars()]),
+      Rule::NthChild(n) => n.used_compare_vars(),
+      Rule::Has(c) => c.used_compare_vars(),
+      Rule::Inside(p) => p.used_compare_vars(),
+      Rule::Precedes(f) => f.used_compare_vars(),
+      Rule::Follows(f) => f.used_compare_vars(),
+      Rule::All(sub) => sub
+        .inner()
+        .iter()
+        .flat_map(|r| r.used_compare_vars())
+        .collect(),
+      Rule::Any(sub) => sub
+        .inner()
+        .iter()
+        .flat_map(|r| r.used_compare_vars())
+        .collect(),
+      Rule::Not(sub) => sub.inner().used_compare_vars(),
+      // a referent rule's compare usage is internal to the util it refers to;
+      // parameterized utils resolve their params at the call site instead.
+      Rule::Matches(_) => HashSet::new(),
+      _ => HashSet::new(),
+    }
+  }
+
   /// check if util rules used are defined
   pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
     match self {
       Rule::Pattern(_) => Ok(()),
       Rule::Kind(_) => Ok(()),
       Rule::Regex(_) => Ok(()),
+      Rule::Compare(_) => Ok(()),
       Rule::NthChild(n) => n.verify_util(),
       Rule::Range(_) => Ok(()),
       Rule::Has(c) => c.verify_util(),
@@ -305,6 +344,7 @@ impl Matcher for Rule {
       Pattern(pattern) => pattern.match_node_with_env(node, env),
       Kind(kind) => kind.match_node_with_env(node, env),
       Regex(regex) => regex.match_node_with_env(node, env),
+      Compare(cmp) => cmp.match_node_with_env(node, env),
       NthChild(nth_child) => nth_child.match_node_with_env(node, env),
       Range(range) => range.match_node_with_env(node, env),
       // relational
@@ -327,6 +367,7 @@ impl Matcher for Rule {
       Pattern(pattern) => pattern.potential_kinds(),
       Kind(kind) => kind.potential_kinds(),
       Regex(regex) => regex.potential_kinds(),
+      Compare(cmp) => cmp.potential_kinds(),
       NthChild(nth_child) => nth_child.potential_kinds(),
       Range(range) => range.potential_kinds(),
       // relational
@@ -373,6 +414,8 @@ pub enum RuleSerializeError {
   NthChild(#[from] NthChildError),
   #[error("Rule contains invalid regex matcher.")]
   WrongRegex(#[from] RegexMatcherError),
+  #[error("Rule contains invalid compare matcher: `{0}` is not a valid meta variable.")]
+  InvalidCompare(String),
   #[error("Rule contains invalid matches reference.")]
   MatchesReference(#[from] ReferentRuleError),
   #[error("Rule contains invalid utils.")]
@@ -511,6 +554,9 @@ fn deserialze_atomic_rule<L: Language>(
   }
   if let Some(regex) = atomic.regex {
     rules.push(R::Regex(RegexMatcher::try_new(&regex)?));
+  }
+  if let Some(cmp) = atomic.compare {
+    rules.push(R::Compare(Compare::try_new(cmp, env)?));
   }
   if let Some(nth_child) = atomic.nth_child {
     rules.push(R::NthChild(NthChild::try_new(nth_child, env)?));

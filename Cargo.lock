@@ -161,6 +161,7 @@ name = "ast-grep-config"
 version = "0.51.1"
 dependencies = [
  "ast-grep-core",
+ "ast-grep-language",
  "bit-set",
  "globset",
  "regex",

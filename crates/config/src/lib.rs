@@ -78,6 +78,42 @@ mod test {
   use ast_grep_core::tree_sitter::{LanguageExt, StrDoc, TSLanguage};
   use std::path::Path;
 
+  /// Wraps a rule object in a complete YAML rule config for testing.
+  pub(crate) fn make_yaml(rule: &str) -> String {
+    make_rule_config("rule", rule)
+  }
+
+  /// Wraps a rule object in a complete YAML rule config for testing.
+  /// The rule is nested under the given key (e.g. `rule` or `constraints`).
+  pub(crate) fn make_rule_config(key: &str, rule: &str) -> String {
+    format!(
+      r"
+id: test
+message: test rule
+severity: info
+language: Tsx
+{key}:
+{rule}
+"
+    )
+  }
+
+  /// Tests a rule matches the given source code.
+  pub(crate) fn test_rule_match(yaml: &str, source: &str) {
+    let globals = GlobalRules::default();
+    let config = &from_yaml_string::<TypeScript>(yaml, &globals).expect("rule should parse")[0];
+    let grep = config.language.ast_grep(source);
+    assert!(grep.root().find(&config.matcher).is_some());
+  }
+
+  /// Tests a rule does not match the given source code.
+  pub(crate) fn test_rule_unmatch(yaml: &str, source: &str) {
+    let globals = GlobalRules::default();
+    let config = &from_yaml_string::<TypeScript>(yaml, &globals).expect("rule should parse")[0];
+    let grep = config.language.ast_grep(source);
+    assert!(grep.root().find(&config.matcher).is_none());
+  }
+
   #[test]
   fn test_yaml_boolean_resolution() {
     use serde_value::Value;
@@ -170,33 +206,6 @@ mod test {
     fn get_ts_language(&self) -> TSLanguage {
       tree_sitter_typescript::LANGUAGE_TSX.into()
     }
-  }
-
-  fn test_rule_match(yaml: &str, source: &str) {
-    let globals = GlobalRules::default();
-    let config = &from_yaml_string::<TypeScript>(yaml, &globals).expect("rule should parse")[0];
-    let grep = config.language.ast_grep(source);
-    assert!(grep.root().find(&config.matcher).is_some());
-  }
-
-  fn test_rule_unmatch(yaml: &str, source: &str) {
-    let globals = GlobalRules::default();
-    let config = &from_yaml_string::<TypeScript>(yaml, &globals).expect("rule should parse")[0];
-    let grep = config.language.ast_grep(source);
-    assert!(grep.root().find(&config.matcher).is_none());
-  }
-
-  fn make_yaml(rule: &str) -> String {
-    format!(
-      r"
-id: test
-message: test rule
-severity: info
-language: Tsx
-rule:
-{rule}
-"
-    )
   }
 
   #[test]

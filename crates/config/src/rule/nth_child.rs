@@ -263,6 +263,14 @@ impl NthChild {
     }
   }
 
+  pub fn used_compare_vars(&self) -> HashSet<&str> {
+    if let Some(rule) = &self.of_rule {
+      rule.used_compare_vars()
+    } else {
+      HashSet::new()
+    }
+  }
+
   pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
     if let Some(rule) = &self.of_rule {
       rule.verify_util()

@@ -291,6 +291,10 @@
           "description": "A Rust regular expression to match the node's text. https://docs.rs/regex/latest/regex/#syntax",
           "type": "string"
         },
+        "compare": {
+          "description": "`compare` matches a node whose text equals a meta variable's text.\nAn optional `source` regex extracts the text before comparison.",
+          "$ref": "#/$defs/SerializableCompare"
+        },
         "nthChild": {
           "description": "`nth_child` accepts number, string or object.\nIt specifies the position in nodes' sibling list.",
           "$ref": "#/$defs/SerializableNthChild"
@@ -411,6 +415,25 @@
           "type": "string",
           "const": "template"
         }
+      ]
+    },
+    "SerializableCompare": {
+      "description": "A rule object to match a node by comparing its text with a meta variable's.\n\nThis is most useful in `constraints`, where the meta variables matched by\n`rule` are all available and can be compared against each other.\n\n```yaml\nrule:\n  pattern: let($SYMBOL) { $$$_ }\n  precedes:\n    stopBy: end\n    pattern: before { $METHOD }\nconstraints:\n  SYMBOL:\n    compare:\n      source: \":(.*)\"\n      target: $METHOD\n```",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "A regex to extract the text for comparison. Its first capture group is\nused; a regex without a capture group compares the whole match.\nDefaults to the whole text of the node.",
+          "type": "string",
+          "default": null
+        },
+        "target": {
+          "description": "The `$VAR` whose matched text is compared against.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target"
       ]
     },
     "SerializableNthChild": {
@@ -659,6 +682,10 @@
         "regex": {
           "description": "A Rust regular expression to match the node's text. https://docs.rs/regex/latest/regex/#syntax",
           "type": "string"
+        },
+        "compare": {
+          "description": "`compare` matches a node whose text equals a meta variable's text.\nAn optional `source` regex extracts the text before comparison.",
+          "$ref": "#/$defs/SerializableCompare"
         },
         "nthChild": {
           "description": "`nth_child` accepts number, string or object.\nIt specifies the position in nodes' sibling list.",
