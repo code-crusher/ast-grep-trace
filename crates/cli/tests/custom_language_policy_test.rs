@@ -78,6 +78,78 @@ fn explicit_ignore_skips_custom_languages() -> Result<()> {
   Ok(())
 }
 
+/// `languageGlobs` referencing an ignored custom language must be skipped
+/// instead of failing with an unsupported-language error.
+#[test]
+fn ignored_custom_language_globs_are_skipped() -> Result<()> {
+  let config = format!("{CUSTOM_LANGUAGE_CONFIG}languageGlobs:\n  example: ['*.example']\n");
+  let dir = create_test_files([("sgconfig.yml", config.as_str())])?;
+
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .arg("scan")
+    .assert()
+    .success()
+    .stderr(contains("custom languages are ignored"))
+    .stderr(contains("is not supported").not());
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan", "--custom-languages", "ignore"])
+    .assert()
+    .success()
+    .stderr(contains("is not supported").not());
+  Ok(())
+}
+
+/// `languageInjections` hosted by an ignored custom language must be skipped
+/// instead of failing with an unsupported-language error.
+#[test]
+fn ignored_custom_language_injections_are_skipped() -> Result<()> {
+  let config = format!(
+    "{CUSTOM_LANGUAGE_CONFIG}languageInjections:\n  - hostLanguage: example\n    rule:\n      pattern: $A\n    injected: rust\n"
+  );
+  let dir = create_test_files([("sgconfig.yml", config.as_str())])?;
+
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .arg("scan")
+    .assert()
+    .success()
+    .stderr(contains("custom languages are ignored"))
+    .stderr(contains("is not supported").not());
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan", "--custom-languages", "ignore"])
+    .assert()
+    .success()
+    .stderr(contains("is not supported").not());
+  Ok(())
+}
+
+/// Ignoring custom languages must not drop globs or injections for built-in
+/// languages declared in the same configuration file.
+#[test]
+fn builtin_language_globs_survive_ignoring_custom_languages() -> Result<()> {
+  let config = "ruleDirs: [rules]\ncustomLanguages:\n  example:\n    libraryPath: missing-library.so\n    extensions: [example]\nlanguageGlobs:\n  rust: ['*.special']\n";
+  let dir = create_test_files([
+    ("sgconfig.yml", config),
+    (
+      "rules/rule.yml",
+      "id: rule\nmessage: m\nseverity: error\nlanguage: rust\nrule: {pattern: 'Some(1)'}\n",
+    ),
+    ("code.special", "fn main() { Some(1) }"),
+  ])?;
+
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .arg("scan")
+    .assert()
+    .code(1)
+    .stderr(contains("custom languages are ignored"))
+    .stdout(contains("Some(1)"));
+  Ok(())
+}
+
 #[test]
 fn allow_custom_languages_attempts_to_load_the_library() -> Result<()> {
   let dir = create_test_files([("sgconfig.yml", CUSTOM_LANGUAGE_CONFIG)])?;

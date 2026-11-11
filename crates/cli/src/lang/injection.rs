@@ -35,6 +35,13 @@ pub struct SerializableInjection {
   injected: Injected,
 }
 
+impl SerializableInjection {
+  /// The language that hosts the injected code.
+  pub fn host_language(&self) -> &str {
+    &self.host_language
+  }
+}
+
 struct Injection {
   host: SgLang,
   rules: Vec<(RuleCore, Option<String>)>,

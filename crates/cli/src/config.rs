@@ -150,23 +150,37 @@ fn register_custom_language(
   sg_config: AstGrepConfig,
   action: CustomLanguageAction,
 ) -> Result<()> {
-  if let Some(custom_langs) = sg_config.custom_languages {
-    match action {
-      CustomLanguageAction::Load => {
-        SgLang::register_custom_language(project_dir, custom_langs)?;
-      }
-      CustomLanguageAction::Ignore if !custom_langs.is_empty() => {
+  // Custom languages that are not loaded are unknown to `SgLang`. Configuration
+  // sections referring to them must be skipped too, otherwise ast-grep reports
+  // an unsupported language instead of silently ignoring the library.
+  let ignored: HashSet<String> = match sg_config.custom_languages {
+    Some(custom_langs) if action == CustomLanguageAction::Load => {
+      SgLang::register_custom_language(project_dir, custom_langs)?;
+      HashSet::new()
+    }
+    Some(custom_langs) => {
+      if !custom_langs.is_empty() {
         eprintln!(
           "Warning: custom languages are ignored because native libraries can execute malicious code. Review the project before using `--custom-languages allow`."
         );
       }
-      CustomLanguageAction::Ignore => {}
+      custom_langs.into_keys().collect()
     }
-  }
+    None => HashSet::new(),
+  };
   if let Some(globs) = sg_config.language_globs {
+    let globs = globs
+      .into_iter()
+      .filter(|(lang, _)| !ignored.contains(lang))
+      .collect();
     SgLang::register_globs(globs)?;
   }
-  SgLang::register_injections(sg_config.language_injections)?;
+  let injections = sg_config
+    .language_injections
+    .into_iter()
+    .filter(|injection| !ignored.contains(injection.host_language()))
+    .collect();
+  SgLang::register_injections(injections)?;
   Ok(())
 }
 
