@@ -5,6 +5,7 @@ mod lang;
 mod lsp;
 mod new;
 mod outline;
+mod playground;
 mod print;
 mod run;
 mod scan;
@@ -21,6 +22,7 @@ use custom_language::CustomLanguagePolicy;
 use lsp::{LspArg, run_language_server};
 use new::{NewArg, run_create_new};
 use outline::{OutlineArg, run_outline};
+use playground::{PlaygroundArg, run_playground};
 use run::{RunArg, run_with_pattern};
 use scan::{ScanArg, run_with_config};
 use utils::exit_with_error;
@@ -67,6 +69,8 @@ enum Commands {
   Lsp(LspArg),
   /// Explore code structure for symbols, imports, exports, and members.
   Outline(OutlineArg),
+  /// Open a rule and/or code file in the web playground.
+  Playground(PlaygroundArg),
   /// Generate shell completion script.
   Completions(CompletionsArg),
   /// Generate rule docs for current configuration. (Not Implemented Yet)
@@ -157,6 +161,7 @@ pub fn main_with_args(args: impl Iterator<Item = String>) -> Result<ExitCode> {
     Commands::New(arg) => run_create_new(arg, project),
     Commands::Lsp(arg) => run_language_server(arg, project).map(|_| ExitCode::SUCCESS),
     Commands::Outline(arg) => run_outline(arg, project),
+    Commands::Playground(arg) => run_playground(arg, project),
     Commands::Completions(arg) => run_shell_completion::<App>(arg),
     #[cfg(debug_assertions)]
     Commands::Docs => todo!("todo, generate rule docs based on current config"),
@@ -356,6 +361,19 @@ mod test_cli {
     ok("completions fish");
     error("completions not-shell");
     error("completions --shell fish");
+  }
+
+  #[test]
+  fn test_playground() {
+    ok("playground --file a.ts");
+    ok("playground -f a.ts");
+    ok("playground --rule no-console");
+    ok("playground -r no-console");
+    ok("playground --rule-file rule.yml");
+    ok("playground --file a.ts --rule no-console");
+    ok("playground --file a.ts --lang typescript");
+    ok("playground --file a.ts --print");
+    error("playground --rule r --rule-file r.yml"); // conflict
   }
 
   #[test]
