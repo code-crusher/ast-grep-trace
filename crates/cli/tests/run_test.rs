@@ -338,3 +338,52 @@ fn test_trace_project() -> Result<()> {
     .stderr(contains("isProject=true,projectDir"));
   Ok(())
 }
+
+#[test]
+fn test_debug_repl_commands() -> Result<()> {
+  let dir = create_test_files([("a.ts", "foo(1); bar(2); foo(3)")])?;
+  // `pn` prints the node AST, `m` prints metavars, `pr` prints the rule and
+  // `s` prints source. `c` then finishes the session.
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["-p", "foo($A)", "-l", "ts", "--debug"])
+    .write_stdin("pn\nm\npr\ns\nc\n")
+    .assert()
+    .success()
+    .stdout(contains("Debugging ./a.ts with 1 rule(s)"))
+    .stdout(contains("-- node: call_expression"))
+    .stdout(contains("[*] pattern: matched"))
+    .stdout(contains("$A = 1"))
+    .stdout(contains("pattern: foo($A)"))
+    .stdout(contains("foo(1)"))
+    // the actual matches are still printed after the debugger finishes
+    .stdout(contains("foo(3)"));
+  Ok(())
+}
+
+#[test]
+fn test_debug_repl_navigation_and_quit() -> Result<()> {
+  let dir = create_test_files([("a.ts", "foo(1); bar(2)")])?;
+  // `n` moves to the next sibling candidate (bar), `q` quits the debugger
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["-p", "foo($A)", "-l", "ts", "--debug"])
+    .write_stdin("n\ns\nq\n")
+    .assert()
+    .success()
+    .stdout(contains("-- node: call_expression"))
+    .stdout(contains("[*] pattern: no match"))
+    .stdout(contains("bar(2)"));
+  Ok(())
+}
+
+#[test]
+fn test_debug_repl_conflicts_with_stdin() -> Result<()> {
+  Command::new(cargo_bin!())
+    .args(["-p", "foo($A)", "-l", "ts", "--debug", "--stdin"])
+    .write_stdin("foo(1)")
+    .assert()
+    .failure()
+    .stderr(contains("cannot be used with"));
+  Ok(())
+}

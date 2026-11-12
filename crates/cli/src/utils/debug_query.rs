@@ -198,7 +198,7 @@ impl From<ts::Point> for Pos {
   }
 }
 
-fn dump_node(node: ts::Node) -> DumpNode {
+pub(crate) fn dump_node(node: ts::Node) -> DumpNode {
   let mut cursor = node.walk();
   let mut nodes = vec![];
   dump_one_node(&mut cursor, &mut nodes);

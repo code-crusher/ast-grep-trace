@@ -15,6 +15,7 @@ use crate::print::{
   Printer,
 };
 use crate::utils::ErrorContext as EC;
+use crate::utils::debugger::{DebugRule, run_debug_session};
 use crate::utils::{ContextArgs, InputArgs, MatchUnit, OutputArgs, filter_file_pattern};
 use crate::utils::{DebugFormat, FileTrace, RunTrace};
 use crate::utils::{Items, PathWorker, StdInWorker, Worker};
@@ -95,6 +96,37 @@ struct MatcherArg {
 }
 
 impl MatcherArg {
+  /// A human readable representation used by the debugger's `print-rule`.
+  fn describe(&self) -> String {
+    if let Some(kind) = &self.kind {
+      return format!("kind: {kind}");
+    }
+    let Some(pattern) = &self.pattern else {
+      return String::new();
+    };
+    let mut desc = format!("pattern: {pattern}");
+    if let Some(selector) = &self.selector {
+      desc.push_str(&format!("\nselector: {selector}"));
+    }
+    if let Some(strictness) = &self.strictness {
+      use MatchStrictness as M;
+      let name = match &strictness.0 {
+        M::Cst => "cst",
+        M::Smart => "smart",
+        M::Ast => "ast",
+        M::Relaxed => "relaxed",
+        M::Signature => "signature",
+        M::Template => "template",
+      };
+      desc.push_str(&format!("\nstrictness: {name}"));
+    }
+    desc
+  }
+
+  fn label(&self) -> &'static str {
+    if self.kind.is_some() { "kind" } else { "pattern" }
+  }
+
   fn build_matcher(&self, lang: SgLang) -> Result<Rule> {
     if let Some(kind) = &self.kind {
       parse_selector(kind, lang).context(EC::ParseSelector)
@@ -153,6 +185,18 @@ pub struct RunArg {
   #[clap(flatten)]
   output: OutputArgs,
 
+  /// Pause on every candidate node and start an interactive debugger.
+  ///
+  /// The debugger lets you inspect the current node, the rule under test and
+  /// the metavariables captured so far, which helps to find out why a rule
+  /// does or does not match. It reads commands from stdin, so it cannot be
+  /// used together with --stdin or the output formats that own stdout.
+  #[clap(
+    long,
+    conflicts_with_all = ["stdin", "json", "files_with_matches", "interactive", "update_all"]
+  )]
+  debug: bool,
+
   /// context related options
   #[clap(flatten)]
   context: ContextArgs,
@@ -197,6 +241,13 @@ pub fn run_with_pattern(mut arg: RunArg, project: Result<ProjectConfig>) -> Resu
   let proj = arg.output.inspect.project_trace();
   proj.print_project(&project)?;
   let context = arg.context.get();
+  if arg.debug {
+    // the debugger owns the terminal, so it takes precedence over other printers
+    let printer = ColoredPrinter::stdout(arg.output.color)
+      .heading(arg.heading)
+      .context(context);
+    return run_with_debugger(arg, printer);
+  }
   if arg.output.files_with_matches {
     let printer = FileNamePrinter::stdout(arg.output.color);
     return run_pattern_with_printer(arg, printer);
@@ -216,6 +267,100 @@ pub fn run_with_pattern(mut arg: RunArg, project: Result<ProjectConfig>) -> Resu
   } else {
     run_pattern_with_printer(arg, printer)
   }
+}
+
+/// Walk files sequentially and start a debugger session before printing each
+/// file's matches.
+///
+/// The debugger must run in the main thread because it reads commands from
+/// stdin, which is why this bypasses the parallel `Worker` machinery.
+fn run_with_debugger<P: Printer>(arg: RunArg, mut printer: P) -> Result<ExitCode> {
+  let colored = arg.output.color.should_use_color();
+  let processor = printer.get_processor();
+  let mut has_matches = false;
+  printer.before_print()?;
+  let walk = if let Some(lang) = arg.lang {
+    arg.input.walk_seq_lang(lang)?
+  } else {
+    arg.input.walk_seq()?
+  };
+  let mut quit = false;
+  let mut paused = false;
+  for entry in walk {
+    let entry = match entry {
+      Ok(entry) => entry,
+      Err(err) => {
+        eprintln!("ERROR: {err}");
+        continue;
+      }
+    };
+    if !entry.file_type().is_some_and(|ty| ty.is_file()) {
+      continue;
+    }
+    let path = entry.path();
+    let Some(path_lang) = SgLang::from_path(path) else {
+      continue;
+    };
+    let (root_matcher, sub_matchers) = match arg.lang {
+      Some(lang) if lang == path_lang => (Some(arg.build_matcher(lang)?), vec![]),
+      Some(lang) => (None, vec![(lang, arg.build_matcher(lang)?)]),
+      None => {
+        // infer the pattern language from the file and support injections
+        let root = Some(arg.build_matcher(path_lang)?);
+        let sub_langs = path_lang.injectable_sg_langs().into_iter().flatten();
+        let subs = sub_langs
+          .filter_map(|l| arg.build_matcher(l).ok().map(|m| (l, m)))
+          .collect();
+        (root, subs)
+      }
+    };
+    let units = match filter_file_pattern(path, path_lang, root_matcher.as_ref(), &sub_matchers) {
+      Ok(units) => units,
+      Err(err) => {
+        eprintln!("ERROR: {err}");
+        continue;
+      }
+    };
+    for unit in units {
+      let debug_rules = [DebugRule {
+        label: arg.matcher.label().to_string(),
+        description: arg.matcher.describe(),
+        matcher: unit.matcher,
+      }];
+      let outcome = run_debug_session(&unit.grep, path, &debug_rules, colored)?;
+      quit = outcome.quit;
+      paused = paused || outcome.candidates > 0;
+      if quit {
+        break;
+      }
+      let rewrite = arg
+        .rewrite
+        .as_ref()
+        .map(|s| Fixer::from_str(s, unit.grep.lang()))
+        .transpose()
+        .unwrap_or_else(|e| {
+          eprintln!("⚠️  Rewriting was skipped because pattern fails to parse. Error detail:");
+          eprintln!("╰▻ {e}");
+          None
+        });
+      if let Some(processed) = match_one_file(&processor, &unit, &rewrite)? {
+        printer.process(processed)?;
+        has_matches = true;
+      }
+    }
+    if quit {
+      break;
+    }
+  }
+  printer.after_print()?;
+  if !paused {
+    eprintln!("no candidate node found in the given paths");
+  }
+  // quitting the debugger is a deliberate user action, not a failed search
+  if quit {
+    return Ok(ExitCode::SUCCESS);
+  }
+  Ok(ExitCode::from(if has_matches { 0 } else { 1 }))
 }
 
 fn run_pattern_with_printer(arg: RunArg, printer: impl Printer + 'static) -> Result<ExitCode> {
@@ -470,6 +615,7 @@ mod test {
       lang: None,
       heading: Heading::Never,
       debug_query: None,
+      debug: false,
       input: InputArgs {
         no_ignore: vec![],
         stdin: false,

@@ -1,5 +1,6 @@
 mod args;
 mod debug_query;
+pub(crate) mod debugger;
 mod error_context;
 mod inspect;
 mod print_diff;

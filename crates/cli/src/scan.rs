@@ -18,6 +18,7 @@ use crate::print::{
   PrintProcessor, Printer, ReportStyle, SimpleFile,
 };
 use crate::utils::RuleOverwrite;
+use crate::utils::debugger::{DebugRule, run_debug_session};
 use crate::utils::{ContextArgs, InputArgs, OutputArgs, OverwriteArgs, filter_file_rule};
 use crate::utils::{ErrorContext as EC, MaxItemCounter};
 use crate::utils::{FileTrace, ScanTrace};
@@ -76,6 +77,18 @@ pub struct ScanArg {
   /// Useful for big codebase to fail scan/search fast.
   #[clap(long, conflicts_with = "interactive", value_name = "NUM")]
   max_results: Option<u16>,
+
+  /// Pause on every candidate node and start an interactive debugger.
+  ///
+  /// The debugger lets you inspect the current node, the rule under test and
+  /// the metavariables captured so far, which helps to find out why a rule
+  /// does or does not match. It reads commands from stdin, so it cannot be
+  /// used together with --stdin or the output formats that own stdout.
+  #[clap(
+    long,
+    conflicts_with_all = ["stdin", "json", "format", "files_with_matches", "interactive", "update_all"]
+  )]
+  debug: bool,
 }
 
 impl ScanArg {
@@ -92,6 +105,13 @@ pub fn run_with_config(mut arg: ScanArg, project: Result<ProjectConfig>) -> Resu
   let project_trace = arg.output.inspect.project_trace();
   project_trace.print_project(&project)?;
   let context = arg.context.get();
+  if arg.debug {
+    // the debugger owns the terminal, so it takes precedence over other printers
+    let printer = ColoredPrinter::stdout(arg.output.color)
+      .style(arg.report_style)
+      .context(context);
+    return run_scan_with_debugger(arg, printer, project);
+  }
   if arg.output.files_with_matches {
     let printer = FileNamePrinter::stdout(arg.output.color);
     return run_scan(arg, printer, project);
@@ -115,6 +135,108 @@ pub fn run_with_config(mut arg: ScanArg, project: Result<ProjectConfig>) -> Resu
   } else {
     run_scan(arg, printer, project)
   }
+}
+
+/// Sequential counterpart of `run_scan` used by the debugger.
+///
+/// The debugger needs to read commands from stdin and pause between files, so
+/// the parallel worker pipeline cannot be used.
+fn run_scan_with_debugger<P: Printer + 'static>(
+  arg: ScanArg,
+  mut printer: P,
+  project: Result<ProjectConfig>,
+) -> Result<ExitCode> {
+  let worker = ScanWithConfig::try_new(arg, project)?;
+  let colored = worker.arg.output.color.should_use_color();
+  let processor = printer.get_processor();
+  let mut error_count = 0usize;
+  printer.before_print()?;
+  let mut quit = false;
+  let mut paused = false;
+  for entry in worker.build_walk_seq()? {
+    let entry = match entry {
+      Ok(entry) => entry,
+      Err(err) => {
+        eprintln!("ERROR: {err}");
+        continue;
+      }
+    };
+    if !entry.file_type().is_some_and(|ty| ty.is_file()) {
+      continue;
+    }
+    let path = entry.path();
+    let units = match filter_file_rule(path, &worker.configs, &worker.trace) {
+      Ok(units) => units,
+      Err(err) => {
+        eprintln!("ERROR: {err}");
+        continue;
+      }
+    };
+    for grep in units {
+      let file_content = grep.source();
+      let abs_path = path.canonicalize()?;
+      let normalized_path = abs_path.strip_prefix(&worker.proj_dir).unwrap_or(path);
+      let rules = worker
+        .configs
+        .get_rule_from_lang(normalized_path, *grep.lang());
+      // RuleCollection already excludes rules with `severity: off`
+      let debug_rules: Vec<_> = rules
+        .iter()
+        .map(|rule| DebugRule {
+          label: rule.id.clone(),
+          description: debug_rule_description(rule),
+          matcher: &rule.matcher,
+        })
+        .collect();
+      if debug_rules.is_empty() {
+        continue;
+      }
+      let outcome = run_debug_session(&grep, path, &debug_rules, colored)?;
+      quit = outcome.quit;
+      paused = paused || outcome.candidates > 0;
+      if quit {
+        break;
+      }
+      let combined = CombinedScan::new(rules);
+      // exclude_fix rule because diffs are printed separately
+      let scanned = combined.scan(&grep, /* separate_fix */ false);
+      for (rule, matches) in scanned.matches {
+        if matches.is_empty() {
+          continue;
+        }
+        if matches!(rule.severity, Severity::Error) {
+          error_count = error_count.saturating_add(matches.len());
+        }
+        let processed = match_rule_on_file(path, matches, rule, file_content, &processor)?;
+        printer.process(processed)?;
+      }
+    }
+    if quit {
+      break;
+    }
+  }
+  printer.after_print()?;
+  worker.trace.print()?;
+  if !paused {
+    eprintln!("no candidate node found in the given paths");
+  }
+  // quitting the debugger is a deliberate user action, not a failed scan
+  if quit {
+    return Ok(ExitCode::SUCCESS);
+  }
+  if error_count > 0 {
+    Err(anyhow::anyhow!(EC::DiagnosticError(error_count)))
+  } else {
+    Ok(ExitCode::SUCCESS)
+  }
+}
+
+/// Render a rule as YAML for the debugger's `print-rule` command.
+fn debug_rule_description(rule: &RuleConfig<SgLang>) -> String {
+  // RuleConfig derefs to its serializable form
+  let serializable: &ast_grep_config::SerializableRuleConfig<SgLang> = rule;
+  serde_saphyr::to_string(serializable)
+    .unwrap_or_else(|err| format!("<cannot serialize rule: {err}>"))
 }
 
 /// Ad-hoc rules can reference global utils declared in `sgconfig.yml`'s utilDirs.
@@ -194,6 +316,21 @@ impl ScanWithConfig {
     })
   }
 }
+impl ScanWithConfig {
+  fn scan_langs(&self) -> HashSet<SgLang> {
+    let mut langs = HashSet::new();
+    self.configs.for_each_rule(|rule| {
+      langs.insert(rule.language);
+    });
+    langs
+  }
+
+  /// Sequential counterpart of `PathWorker::build_walk` used by the debugger.
+  fn build_walk_seq(&self) -> Result<ignore::Walk> {
+    self.arg.input.walk_seq_langs(self.scan_langs().into_iter())
+  }
+}
+
 impl Worker for ScanWithConfig {
   fn consume_items<P: Printer>(
     &self,
@@ -252,11 +389,7 @@ impl PathWorker for ScanWithConfig {
     self.trace.print_skip(path, err)
   }
   fn build_walk(&self) -> Result<WalkParallel> {
-    let mut langs = HashSet::new();
-    self.configs.for_each_rule(|rule| {
-      langs.insert(rule.language);
-    });
-    self.arg.input.walk_langs(langs.into_iter())
+    self.arg.input.walk_langs(self.scan_langs().into_iter())
   }
   fn produce_item<P: Printer>(
     &self,
@@ -522,6 +655,7 @@ rule:
       },
       format: None,
       max_results: None,
+      debug: false,
     }
   }
 

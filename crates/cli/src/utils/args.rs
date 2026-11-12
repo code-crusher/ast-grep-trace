@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use ast_grep_config::Severity;
 use clap::{Args, ValueEnum};
 use ignore::{
-  WalkBuilder, WalkParallel,
+  Walk, WalkBuilder, WalkParallel,
   overrides::{Override, OverrideBuilder},
 };
 use regex::Regex;
@@ -117,6 +117,26 @@ impl InputArgs {
     let types = lang.augmented_file_type();
     let mut builder = self.walk_basic()?;
     Ok(builder.types(types).build_parallel())
+  }
+
+  /// Sequential counterpart of [`InputArgs::walk`], used by the debugger.
+  ///
+  /// The debugger reads commands from stdin, so files must be visited one at a
+  /// time in the main thread instead of being produced by worker threads.
+  pub fn walk_seq(&self) -> Result<Walk> {
+    Ok(self.walk_basic()?.build())
+  }
+
+  pub fn walk_seq_langs(&self, langs: impl Iterator<Item = SgLang>) -> Result<Walk> {
+    let types = SgLang::file_types_for_langs(langs);
+    let mut builder = self.walk_basic()?;
+    Ok(builder.types(types).build())
+  }
+
+  pub fn walk_seq_lang(&self, lang: SgLang) -> Result<Walk> {
+    let types = lang.augmented_file_type();
+    let mut builder = self.walk_basic()?;
+    Ok(builder.types(types).build())
   }
 }
 

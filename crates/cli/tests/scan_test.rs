@@ -1123,3 +1123,21 @@ fn test_scan_invalid_rule_id() -> Result<()> {
     .stderr(contains("Cannot infer rule id"));
   Ok(())
 }
+
+#[test]
+fn test_scan_debug_repl() -> Result<()> {
+  let dir = create_test_files([("test.ts", "Some(123)")])?;
+  let inline_rules = "{id: my-rule, message: test, language: ts, rule: {pattern: Some($A)}}";
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan", "--inline-rules", inline_rules, "--debug"])
+    .write_stdin("pr\nm\nc\n")
+    .assert()
+    .success()
+    .stdout(contains("Debugging ./test.ts with 1 rule(s)"))
+    .stdout(contains("[*] my-rule: matched"))
+    .stdout(contains("id: my-rule"))
+    .stdout(contains("$A = 123"))
+    .stdout(contains("Some(123)"));
+  Ok(())
+}
