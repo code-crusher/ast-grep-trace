@@ -47,6 +47,13 @@
           },
           "description": "A dictionary of custom languages in the project."
         },
+        "plugins": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Plugin"
+          },
+          "description": "A dictionary of custom matcher plugins in the project. Plugins execute native code and are only loaded with `--custom-languages allow`."
+        },
         "languageInjections": {
           "type": "array",
           "items": {
@@ -109,6 +116,25 @@
         }
       },
       "required": ["libraryPath", "extensions"]
+    },
+    "Plugin": {
+      "type": "object",
+      "properties": {
+        "libraryPath": {
+          "type": [
+            "string",
+            "object"
+          ],
+          "description": "The path to the plugin shared object, or a map of target triples to paths."
+        },
+        "pluginSymbol": {
+          "type": "string",
+          "description": "The exported function to call, default is ast_grep_plugin_match"
+        }
+      },
+      "required": [
+        "libraryPath"
+      ]
     },
     "LanguageInjection": {
       "type": "object",

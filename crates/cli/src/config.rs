@@ -4,8 +4,10 @@ use crate::utils::{ErrorContext as EC, IgnoreFile, RuleOverwrite, RuleTrace};
 
 use anyhow::{Context, Result};
 use ast_grep_config::{
-  DeserializeEnv, GlobalRules, RuleCollection, RuleConfig, from_str, from_yaml_string,
+  DeserializeEnv, GlobalRules, PluginRegistry, RuleCollection, RuleConfig, from_str,
+  from_yaml_string,
 };
+use ast_grep_dynamic::CustomPlugin;
 use ast_grep_language::config_file_type;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
@@ -47,6 +49,9 @@ pub struct AstGrepConfig {
   /// configuration for custom languages
   #[serde(skip_serializing_if = "Option::is_none")]
   pub custom_languages: Option<HashMap<String, CustomLang>>,
+  /// configuration for custom matcher plugins
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub plugins: Option<HashMap<String, CustomPlugin>>,
   /// additional file globs for languages
   #[serde(skip_serializing_if = "Option::is_none")]
   pub language_globs: Option<LanguageGlobs>,
@@ -71,6 +76,8 @@ pub struct ProjectConfig {
   pub util_dirs: Option<Vec<PathBuf>>,
   /// ignore file types to disregard when searching
   pub no_ignore: Option<Vec<IgnoreFile>>,
+  /// custom matcher plugins registered from `sgconfig.yml`
+  pub plugins: PluginRegistry,
 }
 
 impl ProjectConfig {
@@ -119,16 +126,19 @@ impl ProjectConfig {
     } else {
       vec![]
     };
-    let config = ProjectConfig {
+    let plugins = std::mem::take(&mut sg_config.plugins);
+    let mut config = ProjectConfig {
       project_dir,
       rule_dirs: std::mem::take(&mut sg_config.rule_dirs),
       outline_rules,
       test_configs: sg_config.test_configs.take(),
       util_dirs: sg_config.util_dirs.take(),
       no_ignore: sg_config.no_ignore.take(),
+      plugins: PluginRegistry::new(),
     };
     // sg_config will not use rule dirs and test configs anymore
     register_custom_language(&config.project_dir, sg_config, custom_languages)?;
+    config.plugins = register_plugins(&config.project_dir, plugins, custom_languages)?;
     Ok(Ok(config))
   }
 }
@@ -170,6 +180,28 @@ fn register_custom_language(
   Ok(())
 }
 
+/// Load plugin shared objects, following the same opt-in policy as custom
+/// languages because both execute native code.
+fn register_plugins(
+  project_dir: &Path,
+  plugins: Option<HashMap<String, CustomPlugin>>,
+  action: CustomLanguageAction,
+) -> Result<PluginRegistry> {
+  let Some(plugins) = plugins else {
+    return Ok(PluginRegistry::new());
+  };
+  match action {
+    CustomLanguageAction::Load => CustomPlugin::register(project_dir, plugins).context(EC::Plugin),
+    CustomLanguageAction::Ignore if !plugins.is_empty() => {
+      eprintln!(
+        "Warning: plugins are ignored because native libraries can execute malicious code. Review the project before using `--custom-languages allow`."
+      );
+      Ok(PluginRegistry::new())
+    }
+    CustomLanguageAction::Ignore => Ok(PluginRegistry::new()),
+  }
+}
+
 fn build_util_walker(base_dir: &Path, util_dirs: &Option<Vec<PathBuf>>) -> Option<WalkBuilder> {
   let mut util_dirs = util_dirs.as_ref()?.iter();
   let first = util_dirs.next()?;
@@ -187,10 +219,13 @@ fn find_util_rules(config: &ProjectConfig) -> Result<GlobalRules> {
   let ProjectConfig {
     project_dir,
     util_dirs,
+    plugins,
     ..
   } = config;
+  // Plugins must be attached even when the project has no utility rule dirs.
+  let globals = GlobalRules::default().with_plugins(plugins.clone());
   let Some(mut walker) = build_util_walker(project_dir, util_dirs) else {
-    return Ok(GlobalRules::default());
+    return Ok(globals);
   };
   let mut utils = vec![];
   let walker = walker.types(config_file_type()).build();
@@ -211,7 +246,7 @@ fn find_util_rules(config: &ProjectConfig) -> Result<GlobalRules> {
   }
 
   let ret = DeserializeEnv::<SgLang>::parse_global_utils(utils).context(EC::InvalidGlobalUtils)?;
-  Ok(ret)
+  Ok(ret.with_plugins(globals.plugins()))
 }
 
 fn read_directory_yaml(
@@ -336,6 +371,7 @@ pub(crate) fn find_config_path_with_default(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use ast_grep_dynamic::LibraryPath;
   use std::fs;
   use tempfile::TempDir;
 
@@ -356,6 +392,31 @@ customLanguages:
       custom_language_outline_rules(Path::new("/project"), config.custom_languages.as_ref());
 
     assert_eq!(paths, vec![PathBuf::from("/project/outline/blade.yml")]);
+  }
+
+  #[test]
+  fn plugins_are_parsed_with_platform_paths() {
+    let config: AstGrepConfig = from_str(
+      r#"
+plugins:
+  react-components:
+    libraryPath: plugins/libreact.so
+    pluginSymbol: my_match
+  multi:
+    libraryPath:
+      x86_64-unknown-linux-gnu: plugins/libmulti.so
+"#,
+    )
+    .expect("config should parse");
+
+    let plugins = config.plugins.expect("plugins should be present");
+    let react = &plugins["react-components"];
+    assert_eq!(react.plugin_symbol.as_deref(), Some("my_match"));
+    assert!(matches!(react.library_path, LibraryPath::Single(_)));
+    assert!(matches!(
+      plugins["multi"].library_path,
+      LibraryPath::Platform(_)
+    ));
   }
 
   /// Verifies that configured ignore-file types deserialize in order.

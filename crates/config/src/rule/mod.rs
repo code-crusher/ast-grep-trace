@@ -1,6 +1,7 @@
 mod deserialize_env;
 mod nth_child;
 mod parameterized_util;
+mod plugin;
 mod range;
 pub mod referent_rule;
 mod relational_rule;
@@ -16,6 +17,7 @@ pub use stop_by::StopBy;
 
 use crate::maybe::Maybe;
 use nth_child::{NthChild, NthChildError, SerializableNthChild};
+use plugin::PluginMatcher;
 use range::{RangeMatcher, RangeMatcherError, SerializableRange};
 use referent_rule::{ReferentRule, ReferentRuleError};
 use relational_rule::{Follows, Has, Inside, Precedes};
@@ -65,6 +67,10 @@ pub struct SerializableRule {
   /// the target node must exactly appear in the range.
   #[serde(default, skip_serializing_if = "Maybe::is_absent")]
   pub range: Maybe<SerializableRange>,
+  /// The name of a registered plugin to match the node with.
+  /// Plugins are loaded from `sgconfig.yml` or registered by library users.
+  #[serde(default, skip_serializing_if = "Maybe::is_absent")]
+  pub plugin: Maybe<String>,
 
   // relational
   /// `inside` accepts a relational rule object.
@@ -123,6 +129,7 @@ impl SerializableRule {
         regex: self.regex.into(),
         nth_child: self.nth_child.into(),
         range: self.range.into(),
+        plugin: self.plugin.into(),
       },
       relational: RelationalRule {
         inside: self.inside.into(),
@@ -146,6 +153,7 @@ pub struct AtomicRule {
   pub regex: Option<String>,
   pub nth_child: Option<SerializableNthChild>,
   pub range: Option<SerializableRange>,
+  pub plugin: Option<String>,
 }
 #[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -231,6 +239,7 @@ pub enum Rule {
   Regex(RegexMatcher),
   NthChild(NthChild),
   Range(RangeMatcher),
+  Plugin(PluginMatcher),
   // relational
   Inside(Box<Inside>),
   Has(Box<Has>),
@@ -262,6 +271,7 @@ impl Rule {
       Rule::Regex(_) => HashSet::new(),
       Rule::NthChild(n) => n.defined_vars(),
       Rule::Range(_) => HashSet::new(),
+      Rule::Plugin(_) => HashSet::new(),
       Rule::Has(c) => c.defined_vars(),
       Rule::Inside(p) => p.defined_vars(),
       Rule::Precedes(f) => f.defined_vars(),
@@ -281,6 +291,7 @@ impl Rule {
       Rule::Regex(_) => Ok(()),
       Rule::NthChild(n) => n.verify_util(),
       Rule::Range(_) => Ok(()),
+      Rule::Plugin(_) => Ok(()),
       Rule::Has(c) => c.verify_util(),
       Rule::Inside(p) => p.verify_util(),
       Rule::Precedes(f) => f.verify_util(),
@@ -307,6 +318,7 @@ impl Matcher for Rule {
       Regex(regex) => regex.match_node_with_env(node, env),
       NthChild(nth_child) => nth_child.match_node_with_env(node, env),
       Range(range) => range.match_node_with_env(node, env),
+      Plugin(plugin) => plugin.match_node_with_env(node, env),
       // relational
       Inside(parent) => match_and_add_label(&**parent, node, env),
       Has(child) => match_and_add_label(&**child, node, env),
@@ -329,6 +341,7 @@ impl Matcher for Rule {
       Regex(regex) => regex.potential_kinds(),
       NthChild(nth_child) => nth_child.potential_kinds(),
       Range(range) => range.potential_kinds(),
+      Plugin(plugin) => plugin.potential_kinds(),
       // relational
       Inside(parent) => parent.potential_kinds(),
       Has(child) => child.potential_kinds(),
@@ -379,6 +392,10 @@ pub enum RuleSerializeError {
   InvalidUtils(#[from] ParameterizedUtilError),
   #[error("Rule contains invalid range matcher.")]
   InvalidRange(#[from] RangeMatcherError),
+  #[error(
+    "Plugin `{0}` is not registered. Register it with `GlobalRules::with_plugin` or configure it in `sgconfig.yml`."
+  )]
+  UndefinedPlugin(String),
   #[error("field is only supported in has/inside.")]
   FieldNotSupported,
   #[error("Relational rule contains invalid field {0}.")]
@@ -517,6 +534,9 @@ fn deserialze_atomic_rule<L: Language>(
   }
   if let Some(range) = atomic.range {
     rules.push(R::Range(RangeMatcher::try_new(range.start, range.end)?));
+  }
+  if let Some(plugin) = atomic.plugin {
+    rules.push(R::Plugin(PluginMatcher::try_new(&plugin, env)?));
   }
   Ok(())
 }

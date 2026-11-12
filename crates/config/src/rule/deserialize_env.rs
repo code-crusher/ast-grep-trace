@@ -2,6 +2,7 @@ use super::parameterized_util::{validate_utility_arguments, validate_utility_id}
 use super::referent_rule::{GlobalRules, ReferentRuleError, RuleRegistration};
 use crate::check_var::CheckHint;
 use crate::maybe::Maybe;
+use crate::plugin::Plugin;
 use crate::rule::{self, Rule, RuleSerializeError, SerializableMatches, SerializableRule};
 use crate::rule_core::{RuleCoreError, SerializableRuleCore};
 use crate::transform::Trans;
@@ -12,6 +13,7 @@ use ast_grep_core::language::Language;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, JsonSchema)]
 pub struct SerializableGlobalRule<L: Language> {
@@ -269,6 +271,10 @@ impl<L: Language> DeserializeEnv<L> {
       registration: RuleRegistration::from_globals(globals, None),
       lang: self.lang,
     }
+  }
+
+  pub(crate) fn get_plugin(&self, name: &str) -> Option<&Arc<dyn Plugin>> {
+    self.registration.get_plugin(name)
   }
 }
 

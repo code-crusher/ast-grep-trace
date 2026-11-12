@@ -41,6 +41,7 @@ pub enum ErrorContext {
   UnrecognizableLanguage(String),
   LangInjection,
   CustomLanguage,
+  Plugin,
   // Run
   ParsePattern,
   ParseSelector,
@@ -93,7 +94,7 @@ impl ErrorContext {
       ProjectAlreadyExist | FileAlreadyExist(_) => 17,
       InsufficientCLIArgument(_) => 22,
       UnrecognizableLanguage(_) => 33,
-      CustomLanguage => 79,
+      CustomLanguage | Plugin => 79,
       OpenEditor | StartLanguageServer => 126,
       // soft error
       PatternHasError | ExitInteractiveEditing => 0,
@@ -183,6 +184,11 @@ impl ErrorMessage {
       CustomLanguage => Self::new(
         "Cannot load custom language library",
         "The custom language library is not found or cannot be loaded.",
+        CUSTOM_LANG_GUIDE,
+      ),
+      Plugin => Self::new(
+        "Cannot load plugin library",
+        "The plugin library is not found, cannot be loaded, or does not export the plugin symbol.",
         CUSTOM_LANG_GUIDE,
       ),
       InvalidGlobalUtils => Self::new(

@@ -188,12 +188,15 @@ dependencies = [
 name = "ast-grep-dynamic"
 version = "0.51.1"
 dependencies = [
+ "ast-grep-config",
  "ast-grep-core",
  "ignore",
  "libloading",
  "serde",
  "serde-saphyr",
+ "serde_json",
  "target-tuple",
+ "tempfile",
  "thiserror 2.0.21",
  "tree-sitter",
 ]

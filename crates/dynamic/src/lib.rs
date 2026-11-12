@@ -15,8 +15,10 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 mod custom_lang;
+mod plugin;
 
 pub use custom_lang::{CustomLang, LibraryPath};
+pub use plugin::{CustomPlugin, DEFAULT_PLUGIN_SYMBOL, PluginError};
 
 type LangIndex = u32;
 

@@ -2,6 +2,7 @@ use super::parameterized_util::{
   GlobalTemplate, match_bound_rule, match_parameterized_referent, parameterized_potential_kinds,
   verify_parameterized_referent,
 };
+use crate::plugin::{Plugin, PluginRegistry};
 use crate::rewriter::Rewriter;
 use crate::{Rule, RuleCore};
 
@@ -42,9 +43,31 @@ impl<R> Default for Registration<R> {
 pub struct GlobalRules {
   rules: Registration<RuleCore>,
   templates: Registration<GlobalTemplate>,
+  plugins: PluginRegistry,
 }
 
 impl GlobalRules {
+  /// Register a custom matcher plugin shared by every rule in the project.
+  ///
+  /// Library users can call this to expose in-process plugins to rules. The
+  /// CLI loads native plugins from `sgconfig.yml` instead.
+  pub fn with_plugin(mut self, name: impl Into<String>, plugin: Arc<dyn Plugin>) -> Self {
+    self.plugins.register(name, plugin);
+    self
+  }
+
+  /// Merge another plugin registry into this one, used by the CLI to attach
+  /// plugins loaded from `sgconfig.yml` to the parsed utility rules.
+  pub fn with_plugins(mut self, plugins: PluginRegistry) -> Self {
+    self.plugins = plugins;
+    self
+  }
+
+  /// The plugin registry shared by all rules.
+  pub fn plugins(&self) -> PluginRegistry {
+    self.plugins.clone()
+  }
+
   /// Registers a global utility during initialization.
   ///
   /// The registry avoids locks on lookups so completed rules can be shared across
@@ -93,6 +116,8 @@ pub struct RuleRegistration {
   global_templates: Registration<GlobalTemplate>,
   /// Every RuleConfig has its own rewriters. But sub-rules share parent's rewriters.
   rewriters: Registration<Rewriter>,
+  /// Plugin matchers shared by all RuleConfigs.
+  plugins: PluginRegistry,
   /// Current parameter bindings allowed while deserializing a global template.
   current_params: Option<Arc<HashSet<String>>>,
 }
@@ -116,8 +141,13 @@ impl RuleRegistration {
       global: global.rules.clone(),
       global_templates: global.templates.clone(),
       rewriters: Default::default(),
+      plugins: global.plugins.clone(),
       current_params: params.map(Arc::new),
     }
+  }
+
+  pub(crate) fn get_plugin(&self, name: &str) -> Option<&Arc<dyn Plugin>> {
+    self.plugins.get(name)
   }
 
   fn get_ref(&self) -> RegistrationRef {

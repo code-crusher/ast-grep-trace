@@ -210,6 +210,10 @@
           "description": "`range` accepts a range object.\nthe target node must exactly appear in the range.",
           "$ref": "#/$defs/SerializableRange"
         },
+        "plugin": {
+          "description": "The name of a registered plugin to match the node with.\nPlugins are loaded from `sgconfig.yml` or registered by library users.",
+          "type": "string"
+        },
         "inside": {
           "description": "`inside` accepts a relational rule object.\nthe target node must appear inside of another node matching the `inside` sub-rule.",
           "$ref": "#/$defs/Relation"
@@ -489,6 +493,10 @@
         "range": {
           "description": "`range` accepts a range object.\nthe target node must exactly appear in the range.",
           "$ref": "#/$defs/SerializableRange"
+        },
+        "plugin": {
+          "description": "The name of a registered plugin to match the node with.\nPlugins are loaded from `sgconfig.yml` or registered by library users.",
+          "type": "string"
         },
         "inside": {
           "description": "`inside` accepts a relational rule object.\nthe target node must appear inside of another node matching the `inside` sub-rule.",
