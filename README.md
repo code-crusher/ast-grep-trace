@@ -92,6 +92,25 @@ ast-grep -p 'new Zodios($URL,  $CONF as const,)' -l ts -r 'new Zodios($URL, $CON
 * [Implement eslint rule using YAML.](https://twitter.com/Hchan_mgn/status/1560108625460355073)
 
 
+## Who is using ast-grep
+
+These companies and projects use ast-grep to search, lint and rewrite code at scale.
+Add yours by commenting on [issue #373](https://github.com/ast-grep/ast-grep/issues/373)!
+
+| Project | Website | Logo |
+| ------- | ------- | ---- |
+| SWC | https://swc.rs | <img src="https://avatars.githubusercontent.com/u/26715726?s=200&v=4" alt="SWC" width="48" /> |
+| unplugin-vue-cssvars | https://github.com/unplugin/unplugin-vue-cssvars#readme | <img src="https://raw.githubusercontent.com/baiwusanyu-c/unplugin-vue-cssvars/master/public/logo.png" alt="unplugin-vue-cssvars" width="48" /> |
+| Shopify Hydrogen | https://hydrogen.shopify.dev/ | <img src="https://cdn.shopify.com/oxygen/59848228886/9830422/9xb58wxdy/favicon.svg" alt="Shopify Hydrogen" width="48" /> |
+| vue-macros | https://github.com/vue-macros/vue-macros-cli | <img src="https://avatars.githubusercontent.com/u/120662729?s=200&v=4" alt="vue-macros" width="48" /> |
+| Modern.js | https://modernjs.dev/ | <img src="https://avatars.githubusercontent.com/u/126793605?s=200&v=4" alt="Modern.js" width="48" /> |
+| CodeRabbit | https://coderabbit.ai/ | <img src="https://avatars.githubusercontent.com/in/347564?s=200&v=4" alt="CodeRabbit" width="48" /> |
+| Codemod | https://codemod.com/ | <img src="https://avatars.githubusercontent.com/u/78830094?s=200&v=4" alt="Codemod" width="48" /> |
+| OpenNext | https://opennext.js.org/cloudflare | <img src="https://avatars.githubusercontent.com/u/180226629?s=200&v=4" alt="OpenNext" width="48" /> |
+| Dify | https://dify.ai/ | <img src="https://avatars.githubusercontent.com/u/127165244" alt="Dify" width="48" /> |
+| GenAIScript | https://microsoft.github.io/genaiscript/reference/scripts/ast-grep/ | <img src="https://microsoft.github.io/genaiscript/images/logo.png" alt="GenAIScript" width="48" /> |
+| VT Code | https://github.com/vinhnx/vtcode | <img src="https://raw.githubusercontent.com/vinhnx/VTCode/refs/heads/main/resources/logo/vt_code_adaptive.svg" alt="VT Code" width="48" /> |
+
 ## Sponsor
 ![Sponsors](https://raw.githubusercontent.com/HerringtonDarkholme/sponsors/main/sponsorkit/sponsors.svg)
 
