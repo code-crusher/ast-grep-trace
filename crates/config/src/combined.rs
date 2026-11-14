@@ -8,10 +8,23 @@ use ast_grep_core::matcher::{Matcher, MatcherExt};
 use ast_grep_core::{AstGrep, Doc, Node, NodeMatch};
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 pub struct ScanResult<'t, 'r, D: Doc, L: Language> {
   pub diffs: Vec<(&'r RuleConfig<L>, NodeMatch<'t, D>)>,
   pub matches: Vec<(&'r RuleConfig<L>, Vec<NodeMatch<'t, D>>)>,
+}
+
+/// Per-rule timing statistics collected by [`CombinedScan::scan_with_timing`].
+///
+/// The vector returned by `scan_with_timing` is parallel to the rules passed to
+/// [`CombinedScan::new`]: `timings[i]` corresponds to the i-th rule.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RuleTiming {
+  /// Total time spent in the rule's matcher.
+  pub elapsed: Duration,
+  /// Number of times the rule's matcher was invoked.
+  pub attempts: usize,
 }
 
 /// store the index to the rule and the matched node
@@ -291,6 +304,33 @@ impl<'r, L: Language> CombinedScan<'r, L> {
   where
     D: Doc<Lang = L>,
   {
+    self.scan_impl(root, separate_fix, None)
+  }
+
+  /// Same as [`scan`](CombinedScan::scan), but also measures per-rule matcher
+  /// time and attempt counts. The `timings` slice must be parallel to the rules
+  /// passed to [`CombinedScan::new`]: `timings[i]` is updated for rule `i`.
+  pub fn scan_with_timing<'a, D>(
+    &self,
+    root: &'a AstGrep<D>,
+    separate_fix: bool,
+    timings: &mut [RuleTiming],
+  ) -> ScanResult<'a, '_, D, L>
+  where
+    D: Doc<Lang = L>,
+  {
+    self.scan_impl(root, separate_fix, Some(timings))
+  }
+
+  fn scan_impl<'a, D>(
+    &self,
+    root: &'a AstGrep<D>,
+    separate_fix: bool,
+    mut timings: Option<&mut [RuleTiming]>,
+  ) -> ScanResult<'a, '_, D, L>
+  where
+    D: Doc<Lang = L>,
+  {
     let mut result = ScanResultInner {
       diffs: vec![],
       matches: HashMap::new(),
@@ -320,7 +360,17 @@ impl<'r, L: Language> CombinedScan<'r, L> {
       let line_sup = suppressions.line_suppression(&node);
       for &idx in rule_idx {
         let rule = &self.rules[idx];
-        let Some(ret) = rule.matcher.match_node(node.clone()) else {
+        let matched = if let Some(timings) = &mut timings {
+          let timing = &mut timings[idx];
+          timing.attempts = timing.attempts.saturating_add(1);
+          let started = Instant::now();
+          let ret = rule.matcher.match_node(node.clone());
+          timing.elapsed = timing.elapsed.saturating_add(started.elapsed());
+          ret
+        } else {
+          rule.matcher.match_node(node.clone())
+        };
+        let Some(ret) = matched else {
           continue;
         };
         if let Some(id) = file_sup.suppressed_id(&rule.id) {
@@ -348,6 +398,17 @@ impl<'r, L: Language> CombinedScan<'r, L> {
 
   pub fn get_rule(&self, idx: usize) -> &'r RuleConfig<L> {
     self.rules[idx]
+  }
+
+  /// Number of rules in this scan, including rules without potential kinds.
+  pub fn rule_count(&self) -> usize {
+    self.rules.len()
+  }
+
+  /// Iterate over all rules in scan order, i.e. parallel to `rule_count` and
+  /// the timings slice accepted by [`CombinedScan::scan_with_timing`].
+  pub fn iter_rules(&self) -> std::slice::Iter<'_, &'r RuleConfig<L>> {
+    self.rules.iter()
   }
 
   pub fn no_suppress_all_config(severity: Severity, lang: L) -> RuleConfig<L> {
@@ -457,6 +518,44 @@ language: Tsx",
     let scan = CombinedScan::new(rules);
     let scanned = scan.scan(&root, false);
     test_fn(scanned.matches);
+  }
+
+  #[test]
+  fn test_scan_with_timing() {
+    let root = TypeScript::Tsx.ast_grep("console.log(1); console.log(2); console.log(3);");
+    let rule = create_rule();
+    let scan = CombinedScan::new(vec![&rule]);
+    let mut timings = vec![RuleTiming::default(); 1];
+    let scanned = scan.scan_with_timing(&root, false, &mut timings);
+    assert_eq!(scanned.matches.len(), 1);
+    assert_eq!(scanned.matches[0].1.len(), 3);
+    // `console.log($A)` matches expression statements, so it is attempted once
+    // per expression statement node and matches all three.
+    assert_eq!(timings[0].attempts, 3);
+    assert!(timings[0].elapsed > Duration::ZERO);
+  }
+
+  #[test]
+  fn test_scan_with_timing_no_kind() {
+    // a rule whose matcher does not expose potential kinds is never tried,
+    // so the timing entry stays untouched
+    let root = TypeScript::Tsx.ast_grep("console.log(1)");
+    let rule: RuleConfig<TypeScript> = RuleConfig::try_from(
+      from_str(
+        r"
+id: test
+rule: {any: []}
+language: Tsx",
+      )
+      .expect("parse"),
+      &Default::default(),
+    )
+    .expect("work");
+    let scan = CombinedScan::new(vec![&rule]);
+    let mut timings = vec![RuleTiming::default(); 1];
+    _ = scan.scan_with_timing(&root, false, &mut timings);
+    assert_eq!(timings[0].attempts, 0);
+    assert_eq!(timings[0].elapsed, Duration::ZERO);
   }
 
   #[test]

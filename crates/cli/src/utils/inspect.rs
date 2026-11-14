@@ -13,16 +13,18 @@
 use super::{EmptyFile, FileTooLarge};
 use crate::config::ProjectConfig;
 use crate::lang::SgLang;
-use ast_grep_config::{RuleCollection, RuleConfig};
+use ast_grep_config::{RuleCollection, RuleConfig, RuleTiming};
 
 use anyhow::Result;
 use clap::ValueEnum;
+use serde::Serialize;
 
 use std::fmt;
 use std::io::{self, Stderr, Write};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 #[derive(Clone, Copy, ValueEnum, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Granularity {
@@ -229,6 +231,48 @@ impl<W: Write + Sync> TraceInfo<RuleTrace, W> {
       )?;
       Ok(())
     })?;
+    self.print_rule_timings()?;
+    Ok(())
+  }
+
+  /// Print aggregated per-rule timing, most expensive rules first.
+  ///
+  /// Timings are only measured when entity inspection is enabled, so this is a
+  /// no-op at other granularities.
+  fn print_rule_timings(&self) -> Result<()> {
+    if self.level < Granularity::Entity {
+      return Ok(());
+    }
+    let rows = self
+      .inner
+      .rule_timings
+      .lock()
+      .expect("lock should not be poisoned");
+    if rows.is_empty() {
+      return Ok(());
+    }
+    let mut rows: Vec<_> = rows
+      .iter()
+      .filter(|row| row.attempts > 0)
+      .map(|row| RuleTimingRow {
+        id: row.id.clone(),
+        elapsed: row.elapsed,
+        attempts: row.attempts,
+      })
+      .collect();
+    rows.sort_unstable_by(|a, b| b.elapsed.cmp(&a.elapsed));
+    self.print_entity("rule_timing", "all", |w| {
+      let mut sep = "";
+      for row in rows {
+        write!(
+          w,
+          "{sep}{}=elapsed={:?},attempts={}",
+          row.id, row.elapsed, row.attempts
+        )?;
+        sep = ",";
+      }
+      Ok(())
+    })?;
     Ok(())
   }
 
@@ -260,6 +304,66 @@ pub struct RuleTrace {
   pub file_trace: FileTrace,
   pub effective_rule_count: usize,
   pub skipped_rule_count: usize,
+  /// Per-rule timing aggregated across all scanned files.
+  ///
+  /// Keyed by rule id. Entries are added by worker threads (which can run in
+  /// parallel) via [`RuleTrace::add_rule_timing`] and printed, sorted by
+  /// elapsed time, when entity inspection is enabled.
+  pub rule_timings: Mutex<Vec<RuleTimingRow>>,
+}
+
+/// One rule's aggregated timing statistics.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleTimingRow {
+  /// The rule id.
+  pub id: String,
+  /// Total time the rule's matcher spent trying to match nodes.
+  pub elapsed: Duration,
+  /// Total number of nodes the rule's matcher was attempted on.
+  pub attempts: usize,
+}
+
+impl RuleTimingRow {
+  /// Aggregate per-file timings for a rule id into a single row.
+  fn aggregate(id: &str, timings: impl IntoIterator<Item = RuleTiming>) -> Self {
+    let mut elapsed = Duration::ZERO;
+    let mut attempts = 0usize;
+    for timing in timings {
+      elapsed += timing.elapsed;
+      attempts += timing.attempts;
+    }
+    RuleTimingRow {
+      id: id.into(),
+      elapsed,
+      attempts,
+    }
+  }
+}
+
+impl RuleTrace {
+  /// Merge per-rule timings of one scanned file into the aggregated trace.
+  pub fn add_rule_timings(&self, timings: Vec<(String, RuleTiming)>) {
+    let mut rows = self.rule_timings.lock().expect("lock should not be poisoned");
+    for (id, timing) in timings {
+      if timing.attempts == 0 {
+        continue;
+      }
+      if let Some(row) = rows.iter_mut().find(|row| row.id == id) {
+        row.elapsed += timing.elapsed;
+        row.attempts += timing.attempts;
+      } else {
+        rows.push(RuleTimingRow::aggregate(&id, [timing]));
+      }
+    }
+  }
+}
+
+impl<W: Write + Sync> TraceInfo<RuleTrace, W> {
+  /// Merge per-rule timings of one scanned file into the aggregated trace.
+  pub fn add_rule_timings(&self, timings: Vec<(String, RuleTiming)>) {
+    self.inner.add_rule_timings(timings)
+  }
 }
 
 pub type ProjectTrace = TraceInfo<(), Stderr>;
@@ -291,6 +395,7 @@ mod test {
       effective_rule_count: 10,
       skipped_rule_count: 2,
       file_trace: Default::default(),
+      rule_timings: Default::default(),
     };
     let scan_trace = tracing.scan_trace_impl(rule_stats, unsafe { ret.as_mut_vec() });
     assert_eq!(scan_trace.level, Granularity::Summary);
@@ -319,6 +424,56 @@ mod test {
 sg: summary|rule: effectiveRuleCount=10,skippedRuleCount=2
 "
     );
+  }
+
+  #[test]
+  fn test_rule_timing_aggregation() {
+    let trace = RuleTrace::default();
+    trace.add_rule_timings(vec![
+      ("slow".into(), RuleTiming { elapsed: Duration::from_millis(3), attempts: 10 }),
+      ("fast".into(), RuleTiming { elapsed: Duration::from_micros(1), attempts: 5 }),
+    ]);
+    trace.add_rule_timings(vec![
+      ("slow".into(), RuleTiming { elapsed: Duration::from_millis(2), attempts: 8 }),
+    ]);
+    let rows = trace.rule_timings.lock().unwrap();
+    assert_eq!(rows.len(), 2);
+    let slow = rows.iter().find(|r| r.id == "slow").unwrap();
+    assert_eq!(slow.elapsed, Duration::from_millis(5));
+    assert_eq!(slow.attempts, 18);
+    let fast = rows.iter().find(|r| r.id == "fast").unwrap();
+    assert_eq!(fast.attempts, 5);
+  }
+
+  #[test]
+  fn test_rule_timing_print() {
+    let tracing = Granularity::Entity;
+    let mut ret = String::new();
+    let scan_trace = tracing.scan_trace_impl(RuleTrace::default(), unsafe { ret.as_mut_vec() });
+    scan_trace.add_rule_timings(vec![
+      ("slow".into(), RuleTiming { elapsed: Duration::from_millis(3), attempts: 10 }),
+      ("fast".into(), RuleTiming { elapsed: Duration::from_micros(1), attempts: 5 }),
+    ]);
+    assert!(scan_trace.print().is_ok());
+    // the most expensive rule is printed first
+    assert!(ret.contains("slow=elapsed=3ms,attempts=10"));
+    assert!(ret.contains("fast=elapsed=1µs,attempts=5"));
+    let slow_pos = ret.find("slow=").unwrap();
+    let fast_pos = ret.find("fast=").unwrap();
+    assert!(slow_pos < fast_pos);
+  }
+
+  #[test]
+  fn test_rule_timing_print_noop_for_summary() {
+    let tracing = Granularity::Summary;
+    let mut ret = String::new();
+    let scan_trace = tracing.scan_trace_impl(RuleTrace::default(), unsafe { ret.as_mut_vec() });
+    scan_trace.add_rule_timings(vec![(
+      "slow".into(),
+      RuleTiming { elapsed: Duration::from_millis(3), attempts: 10 },
+    )]);
+    assert!(scan_trace.print().is_ok());
+    assert!(!ret.contains("rule_timing"));
   }
 
   #[test]

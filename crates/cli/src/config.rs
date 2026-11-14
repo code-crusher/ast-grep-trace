@@ -269,6 +269,7 @@ fn read_directory_yaml(
     file_trace: Default::default(),
     effective_rule_count,
     skipped_rule_count: total_rule_count - effective_rule_count,
+    rule_timings: Default::default(),
   };
   Ok((collection, trace))
 }
@@ -283,6 +284,7 @@ pub fn with_rule_stats(
     file_trace: Default::default(),
     effective_rule_count,
     skipped_rule_count: total_rule_count - effective_rule_count,
+    rule_timings: Default::default(),
   };
   Ok((collection, trace))
 }

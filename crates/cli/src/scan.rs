@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use ast_grep_config::{
-  CombinedScan, GlobalRules, NO_SUPPRESS_ALL_ID, RuleCollection, RuleConfig, Severity,
+  CombinedScan, GlobalRules, NO_SUPPRESS_ALL_ID, RuleCollection, RuleConfig, RuleTiming, Severity,
   UNUSED_SUPPRESSION_ID, from_yaml_string,
 };
 use ast_grep_core::{NodeMatch, tree_sitter::StrDoc};
@@ -20,7 +20,7 @@ use crate::print::{
 use crate::utils::RuleOverwrite;
 use crate::utils::{ContextArgs, InputArgs, OutputArgs, OverwriteArgs, filter_file_rule};
 use crate::utils::{ErrorContext as EC, MaxItemCounter};
-use crate::utils::{FileTrace, ScanTrace};
+use crate::utils::{FileTrace, Granularity, ScanTrace};
 use crate::utils::{Items, PathWorker, StdInWorker, Worker};
 
 use std::collections::HashSet;
@@ -266,6 +266,8 @@ impl PathWorker for ScanWithConfig {
     let items = filter_file_rule(path, &self.configs, &self.trace)?;
     let mut error_count = 0usize;
     let mut ret = vec![];
+    // collect per-rule timing statistics if entity inspection is enabled
+    let trace_timings = self.trace.level >= Granularity::Entity;
     for grep in items {
       let file_content = grep.source();
       // use path relative to project director
@@ -279,7 +281,22 @@ impl PathWorker for ScanWithConfig {
       combined.set_no_suppress_all_rule(&self.no_suppress_all_rule);
       let interactive = self.arg.output.needs_interactive();
       // exclude_fix rule because we already have diff inspection before
-      let scanned = combined.scan(&grep, /* separate_fix*/ interactive);
+      let mut rule_timings = trace_timings
+        .then(|| vec![RuleTiming::default(); combined.rule_count()]);
+      let scanned = if let Some(rule_timings) = &mut rule_timings {
+        combined.scan_with_timing(&grep, /* separate_fix*/ interactive, rule_timings)
+      } else {
+        combined.scan(&grep, /* separate_fix*/ interactive)
+      };
+      if trace_timings {
+        let rule_timings = rule_timings.expect("must be some when trace_timings");
+        let file_timings = combined
+          .iter_rules()
+          .zip(rule_timings)
+          .map(|(rule, timing)| (rule.id.clone(), timing))
+          .collect();
+        self.trace.add_rule_timings(file_timings);
+      }
       if interactive {
         let diffs = scanned.diffs;
         let processed = match_rule_diff_on_file(path, diffs, processor)?;

@@ -16,6 +16,7 @@ use serde_saphyr::{Error as YamlError, MergeKeyPolicy, NonFiniteFloatPolicy, Opt
 use ast_grep_core::language::Language;
 
 pub use combined::{CombinedScan, NO_SUPPRESS_ALL_ID, UNUSED_SUPPRESSION_ID};
+pub use combined::RuleTiming;
 pub use fixer::Fixer;
 pub use label::{Label, LabelStyle};
 pub use rule::DeserializeEnv;
