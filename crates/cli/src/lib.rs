@@ -45,7 +45,7 @@ Search and Rewrite code at large scale using AST pattern.
 struct App {
   #[clap(subcommand)]
   command: Commands,
-  /// Path to ast-grep root config, default is sgconfig.yml.
+  /// Path to ast-grep root config, default is sgconfig.yml or .config/ast-grep/sgconfig.yml.
   #[clap(short, long, global = true, value_name = "CONFIG_FILE")]
   config: Option<PathBuf>,
   /// Control how sgconfig.yml handles native custom language libraries (default: ignore).

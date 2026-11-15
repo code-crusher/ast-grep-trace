@@ -11,6 +11,7 @@ use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
@@ -84,10 +85,7 @@ impl ProjectConfig {
     let config_path = config_path.canonicalize().context(EC::ReadConfiguration)?;
     let config_str = read_to_string(&config_path).context(EC::ReadConfiguration)?;
     let sg_config: AstGrepConfig = from_str(&config_str).context(EC::ParseConfiguration)?;
-    let project_dir = config_path
-      .parent()
-      .expect("config file must have parent directory")
-      .to_path_buf();
+    let project_dir = project_dir_for_config(&config_path);
     Ok(Some((project_dir, sg_config)))
   }
 
@@ -308,6 +306,7 @@ pub fn read_rule_file(path: &Path, global_rules: &GlobalRules) -> Result<Vec<Rul
 
 const CONFIG_FILE_YML: &str = "sgconfig.yml";
 const CONFIG_FILE_YAML: &str = "sgconfig.yaml";
+const CONFIG_DIR: &str = ".config/ast-grep";
 
 /// return None if config file does not exist
 pub(crate) fn find_config_path_with_default(
@@ -318,19 +317,46 @@ pub(crate) fn find_config_path_with_default(
   }
   let mut path = std::env::current_dir()?;
   loop {
-    let yml = path.join(CONFIG_FILE_YML);
-    let yaml = path.join(CONFIG_FILE_YAML);
-    if yml.exists() {
-      break Ok(Some(yml));
-    } else if yaml.exists() {
-      break Ok(Some(yaml));
+    // configs in the directory itself take precedence over `.config/ast-grep/`
+    for file_name in [CONFIG_FILE_YML, CONFIG_FILE_YAML] {
+      let config = path.join(file_name);
+      if config.exists() {
+        return Ok(Some(config));
+      }
+    }
+    for file_name in [CONFIG_FILE_YML, CONFIG_FILE_YAML] {
+      let config = path.join(CONFIG_DIR).join(file_name);
+      if config.exists() {
+        return Ok(Some(config));
+      }
     }
     if let Some(parent) = path.parent() {
       path = parent.to_path_buf();
     } else {
-      break Ok(None);
+      return Ok(None);
     }
   }
+}
+
+/// The project directory is the directory containing the config file, except
+/// that configs in `.config/ast-grep/` belong to the directory that contains
+/// `.config` (i.e. the project/repo root).
+fn project_dir_for_config(config_path: &Path) -> PathBuf {
+  let mut dir = config_path
+    .parent()
+    .expect("config file must have parent directory");
+  if dir.file_name() == Some(OsStr::new("ast-grep"))
+    && dir
+      .parent()
+      .is_some_and(|d| d.file_name() == Some(OsStr::new(".config")))
+  {
+    dir = dir
+      .parent()
+      .expect(".config must have a parent directory")
+      .parent()
+      .expect("the project root must have a parent directory");
+  }
+  dir.to_path_buf()
 }
 
 #[cfg(test)]
@@ -399,6 +425,24 @@ noIgnore: [hidden, vcs]
       project
         .canonicalize()
         .expect("project directory should be canonicalized")
+    );
+  }
+
+  #[test]
+  fn config_dir_project_dir_is_repo_root() {
+    let root = Path::new("/project");
+    assert_eq!(
+      project_dir_for_config(&root.join("sgconfig.yml")),
+      root.to_path_buf()
+    );
+    assert_eq!(
+      project_dir_for_config(&root.join(".config/ast-grep/sgconfig.yml")),
+      root.to_path_buf()
+    );
+    // an explicit `--config` path in some other directory is not remapped
+    assert_eq!(
+      project_dir_for_config(&root.join("elsewhere/sgconfig.yml")),
+      root.join("elsewhere")
     );
   }
 }

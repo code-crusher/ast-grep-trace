@@ -125,6 +125,64 @@ fn test_sg_rule_off() -> Result<()> {
   Ok(())
 }
 
+/// Verifies that the config in `.config/ast-grep/` is discovered and that
+/// relative paths in it resolve against the project root.
+#[test]
+fn test_scan_discovers_config_in_config_dir() -> Result<()> {
+  let dir = create_test_files([
+    (".config/ast-grep/sgconfig.yml", "ruleDirs:\n  - rules\n"),
+    ("rules/on-rule.yml", RULE1),
+    ("test.ts", "Some(123)"),
+  ])?;
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan"])
+    .assert()
+    .success()
+    .stdout(contains("on-rule"));
+  Ok(())
+}
+
+/// Same as above, but run from a subdirectory to verify the upward search.
+#[test]
+fn test_scan_discovers_config_in_config_dir_from_subdir() -> Result<()> {
+  let dir = create_test_files([
+    (".config/ast-grep/sgconfig.yml", "ruleDirs:\n  - rules\n"),
+    ("rules/on-rule.yml", RULE1),
+    ("sub/test.ts", "Some(123)"),
+  ])?;
+  Command::new(cargo_bin!())
+    .current_dir(dir.path().join("sub"))
+    .args(["scan"])
+    .assert()
+    .success()
+    .stdout(contains("on-rule"));
+  Ok(())
+}
+
+/// Verifies that a root `sgconfig.yml` takes precedence over `.config/ast-grep/`.
+#[test]
+fn test_root_config_takes_precedence_over_config_dir() -> Result<()> {
+  let dir = create_test_files([
+    ("sgconfig.yml", "ruleDirs:\n  - rules\n"),
+    (
+      ".config/ast-grep/sgconfig.yml",
+      "ruleDirs:\n  - other-rules\n",
+    ),
+    ("rules/on-rule.yml", RULE1),
+    ("other-rules/off-rule.yml", RULE2),
+    ("test.ts", "Some(123)"),
+  ])?;
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan"])
+    .assert()
+    .success()
+    .stdout(contains("on-rule"))
+    .stdout(contains("off-rule").not());
+  Ok(())
+}
+
 /// Verifies that scan honors project-configured hidden-file searches.
 #[test]
 fn test_no_ignore_from_config() -> Result<()> {
