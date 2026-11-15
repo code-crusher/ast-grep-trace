@@ -6,6 +6,7 @@ mod lsp;
 mod new;
 mod outline;
 mod print;
+mod rule_source;
 mod run;
 mod scan;
 mod utils;

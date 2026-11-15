@@ -39,3 +39,6 @@ thiserror = "2.0.0"
 schemars = "1.0.0"
 anyhow = "1.0.82"
 dashmap = "6.0.0"
+flate2 = "1.1.0"
+tar = "0.4.44"
+ureq = { version = "2.12.0", default-features = false, features = ["tls", "gzip"] }

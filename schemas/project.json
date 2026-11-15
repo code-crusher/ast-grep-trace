@@ -12,7 +12,7 @@
             "type": "string"
           },
           "title": "Rule directories",
-          "description": "A list of string instructing where to discover ast-grep's YAML rules."
+          "description": "A list of strings instructing where to discover ast-grep's YAML rules. Entries are either project-relative directories or GitHub URLs like https://github.com/user/repo/tree/main/rules."
         },
         "testConfigs": {
           "type": "array",
@@ -28,7 +28,7 @@
             "type": "string"
           },
           "title": "Utility directories",
-          "description": "A list of string instructing where to discover ast-grep's global utility rules."
+          "description": "A list of strings instructing where to discover ast-grep's global utility rules. Entries are either project-relative directories or GitHub URLs like https://github.com/user/repo/tree/main/rules."
         },
         "languageGlobs": {
           "type": "object",

@@ -1,5 +1,6 @@
 use crate::custom_language::CustomLanguageAction;
 use crate::lang::{CustomLang, LanguageGlobs, SerializableInjection, SgLang};
+use crate::rule_source::RuleSource;
 use crate::utils::{ErrorContext as EC, IgnoreFile, RuleOverwrite, RuleTrace};
 
 use anyhow::{Context, Result};
@@ -35,7 +36,8 @@ impl From<PathBuf> for TestConfig {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AstGrepConfig {
-  /// YAML rule directories
+  /// YAML rule directories. Entries are either project-relative paths or
+  /// GitHub URLs like `https://github.com/user/repo/tree/main/rules`.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub rule_dirs: Vec<PathBuf>,
   /// test configurations
@@ -170,17 +172,25 @@ fn register_custom_language(
   Ok(())
 }
 
-fn build_util_walker(base_dir: &Path, util_dirs: &Option<Vec<PathBuf>>) -> Option<WalkBuilder> {
-  let mut util_dirs = util_dirs.as_ref()?.iter();
-  let first = util_dirs.next()?;
-  let mut walker = WalkBuilder::new(base_dir.join(first));
+fn build_util_walker(
+  base_dir: &Path,
+  util_dirs: &Option<Vec<PathBuf>>,
+) -> Result<Option<WalkBuilder>> {
+  let Some(mut util_dirs) = util_dirs.as_ref().map(|dirs| dirs.iter()) else {
+    return Ok(None);
+  };
+  let first = match util_dirs.next() {
+    Some(dir) => resolve_rule_dir(base_dir, dir)?,
+    None => return Ok(None),
+  };
+  let mut walker = WalkBuilder::new(first);
   for dir in util_dirs {
-    walker.add(base_dir.join(dir));
+    walker.add(resolve_rule_dir(base_dir, dir)?);
   }
   // Configured directories are explicit inputs, so ignore files outside of
   // them must not prevent their contents from being discovered.
   walker.parents(false);
-  Some(walker)
+  Ok(Some(walker))
 }
 
 fn find_util_rules(config: &ProjectConfig) -> Result<GlobalRules> {
@@ -189,7 +199,7 @@ fn find_util_rules(config: &ProjectConfig) -> Result<GlobalRules> {
     util_dirs,
     ..
   } = config;
-  let Some(mut walker) = build_util_walker(project_dir, util_dirs) else {
+  let Some(mut walker) = build_util_walker(project_dir, util_dirs)? else {
     return Ok(GlobalRules::default());
   };
   let mut utils = vec![];
@@ -226,7 +236,7 @@ fn read_directory_yaml(
     ..
   } = config;
   for dir in rule_dirs {
-    let dir_path = project_dir.join(dir);
+    let dir_path = resolve_rule_dir(project_dir, dir)?;
     let walker = WalkBuilder::new(&dir_path)
       .parents(false)
       .types(config_file_type())
@@ -285,6 +295,17 @@ pub fn with_rule_stats(
     skipped_rule_count: total_rule_count - effective_rule_count,
   };
   Ok((collection, trace))
+}
+
+/// Resolve a `ruleDirs`/`utilDirs` entry to a local directory. Local entries
+/// are joined with the project directory; GitHub URLs like
+/// `https://github.com/user/repo/tree/main/rules` are downloaded into the
+/// ast-grep cache and the cached directory is returned.
+fn resolve_rule_dir(project_dir: &Path, dir: &Path) -> Result<PathBuf> {
+  match RuleSource::from_entry(dir)? {
+    RuleSource::Local(path) => Ok(project_dir.join(path)),
+    RuleSource::Remote(remote) => remote.download(),
+  }
 }
 
 pub fn read_rule_file(path: &Path, global_rules: &GlobalRules) -> Result<Vec<RuleConfig<SgLang>>> {
@@ -373,6 +394,12 @@ noIgnore: [hidden, vcs]
       config.no_ignore.as_deref(),
       Some([IgnoreFile::Hidden, IgnoreFile::Vcs])
     ));
+  }
+
+  #[test]
+  fn local_rule_dirs_are_project_relative() {
+    let dir = resolve_rule_dir(Path::new("/project"), Path::new("rules")).unwrap();
+    assert_eq!(dir, PathBuf::from("/project/rules"));
   }
 
   #[cfg(unix)]
