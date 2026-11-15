@@ -19,7 +19,7 @@ use crate::print::{
 };
 use crate::utils::RuleOverwrite;
 use crate::utils::{ContextArgs, InputArgs, OutputArgs, OverwriteArgs, filter_file_rule};
-use crate::utils::{ErrorContext as EC, MaxItemCounter};
+use crate::utils::{DiagnosticCounts, ErrorContext as EC, MaxItemCounter};
 use crate::utils::{FileTrace, ScanTrace};
 use crate::utils::{Items, PathWorker, StdInWorker, Worker};
 
@@ -141,6 +141,37 @@ fn run_scan<P: Printer + 'static>(
   }
 }
 
+/// Thread-safe per-severity diagnostic counters accumulated during a scan.
+#[derive(Default)]
+struct DiagnosticCounter {
+  error: AtomicUsize,
+  warning: AtomicUsize,
+  info: AtomicUsize,
+  hint: AtomicUsize,
+}
+
+impl DiagnosticCounter {
+  fn add(&self, severity: &Severity, count: usize) {
+    let counter = match severity {
+      Severity::Error => &self.error,
+      Severity::Warning => &self.warning,
+      Severity::Info => &self.info,
+      Severity::Hint => &self.hint,
+      Severity::Off => return,
+    };
+    counter.fetch_add(count, Ordering::AcqRel);
+  }
+
+  fn snapshot(&self) -> DiagnosticCounts {
+    DiagnosticCounts {
+      error: self.error.load(Ordering::Acquire),
+      warning: self.warning.load(Ordering::Acquire),
+      info: self.info.load(Ordering::Acquire),
+      hint: self.hint.load(Ordering::Acquire),
+    }
+  }
+}
+
 struct ScanWithConfig {
   arg: ScanArg,
   configs: RuleCollection<SgLang>,
@@ -148,8 +179,7 @@ struct ScanWithConfig {
   no_suppress_all_rule: RuleConfig<SgLang>,
   trace: ScanTrace,
   proj_dir: PathBuf,
-  // TODO: remove this
-  error_count: AtomicUsize,
+  diagnostic_counts: DiagnosticCounter,
   max_item_counter: Option<MaxItemCounter>,
 }
 impl ScanWithConfig {
@@ -189,7 +219,7 @@ impl ScanWithConfig {
       no_suppress_all_rule,
       trace,
       proj_dir: absolute_proj_dir,
-      error_count: AtomicUsize::new(0),
+      diagnostic_counts: DiagnosticCounter::default(),
       max_item_counter,
     })
   }
@@ -206,9 +236,9 @@ impl Worker for ScanWithConfig {
     }
     printer.after_print()?;
     self.trace.print()?;
-    let error_count = self.error_count.load(Ordering::Acquire);
-    if error_count > 0 {
-      Err(anyhow::anyhow!(EC::DiagnosticError(error_count)))
+    let counts = self.diagnostic_counts.snapshot();
+    if counts.total() > 0 {
+      Err(anyhow::anyhow!(EC::DiagnosticError(counts)))
     } else {
       Ok(ExitCode::SUCCESS)
     }
@@ -264,7 +294,6 @@ impl PathWorker for ScanWithConfig {
     processor: &P::Processor,
   ) -> Result<Vec<P::Processed>> {
     let items = filter_file_rule(path, &self.configs, &self.trace)?;
-    let mut error_count = 0usize;
     let mut ret = vec![];
     for grep in items {
       let file_content = grep.source();
@@ -302,14 +331,11 @@ impl PathWorker for ScanWithConfig {
           continue;
         }
         let match_count = matches.len();
-        if matches!(rule.severity, Severity::Error) {
-          error_count = error_count.saturating_add(match_count);
-        }
+        self.diagnostic_counts.add(&rule.severity, match_count);
         let processed = match_rule_on_file(path, matches, rule, file_content, processor)?;
         ret.push(processed);
       }
     }
-    self.error_count.fetch_add(error_count, Ordering::AcqRel);
     Ok(ret)
   }
 
@@ -323,8 +349,7 @@ impl PathWorker for ScanWithConfig {
 
 struct ScanStdin {
   rules: Vec<RuleConfig<SgLang>>,
-  // TODO: remove this
-  error_count: AtomicUsize,
+  diagnostic_counts: DiagnosticCounter,
   max_diagnostics_shown: Option<usize>,
 }
 impl ScanStdin {
@@ -343,7 +368,7 @@ impl ScanStdin {
     };
     Ok(Self {
       rules,
-      error_count: AtomicUsize::new(0),
+      diagnostic_counts: DiagnosticCounter::default(),
       max_diagnostics_shown: arg.max_results.map(usize::from),
     })
   }
@@ -360,9 +385,9 @@ impl Worker for ScanStdin {
       printer.process(item)?;
     }
     printer.after_print()?;
-    let error_count = self.error_count.load(Ordering::Acquire);
-    if error_count > 0 {
-      Err(anyhow::anyhow!(EC::DiagnosticError(error_count)))
+    let counts = self.diagnostic_counts.snapshot();
+    if counts.total() > 0 {
+      Err(anyhow::anyhow!(EC::DiagnosticError(counts)))
     } else {
       Ok(ExitCode::SUCCESS)
     }
@@ -386,7 +411,6 @@ impl StdInWorker for ScanStdin {
     let file_content = grep.source();
     // do not separate_fix rule in stdin mode
     let scanned = combined.scan(&grep, false);
-    let mut error_count = 0usize;
     let mut diagnostic_count = 0usize;
     let mut ret = vec![];
     for (rule, matches) in scanned.matches {
@@ -405,13 +429,10 @@ impl StdInWorker for ScanStdin {
       }
       let match_count = matches.len();
       diagnostic_count += match_count;
-      if matches!(rule.severity, Severity::Error) {
-        error_count = error_count.saturating_add(match_count);
-      }
+      self.diagnostic_counts.add(&rule.severity, match_count);
       let processed = match_rule_on_file(path, matches, rule, file_content, processor)?;
       ret.push(processed);
     }
-    self.error_count.fetch_add(error_count, Ordering::AcqRel);
     Ok(ret)
   }
 }

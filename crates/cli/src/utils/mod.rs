@@ -8,7 +8,7 @@ mod worker;
 
 pub use args::{ContextArgs, IgnoreFile, InputArgs, OutputArgs, OverwriteArgs};
 pub use debug_query::DebugFormat;
-pub use error_context::{ErrorContext, exit_with_error};
+pub use error_context::{DiagnosticCounts, ErrorContext, exit_with_error};
 pub use inspect::{FileTrace, Granularity, RuleTrace, RunTrace, ScanTrace};
 pub use print_diff::DiffStyles;
 pub use rule_overwrite::RuleOverwrite;

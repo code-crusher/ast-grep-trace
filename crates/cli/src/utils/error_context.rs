@@ -22,6 +22,39 @@ const PLAYGROUND: Option<&str> = Some("/playground.html");
 const CUSTOM_LANG_GUIDE: Option<&str> = Some("/advanced/custom-language.html");
 const UTILITY_RULE: Option<&str> = Some("/guide/rule-config/utility-rule.html");
 
+/// Per-severity match counts accumulated during a scan.
+/// Used to announce the total number of diagnostics, not just errors.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiagnosticCounts {
+  pub error: usize,
+  pub warning: usize,
+  pub info: usize,
+  pub hint: usize,
+}
+
+impl DiagnosticCounts {
+  pub fn total(&self) -> usize {
+    self.error + self.warning + self.info + self.hint
+  }
+
+  fn summary(&self) -> String {
+    let mut parts = vec![];
+    if self.error > 0 {
+      parts.push(format!("{} error(s)", self.error));
+    }
+    if self.warning > 0 {
+      parts.push(format!("{} warning(s)", self.warning));
+    }
+    if self.info > 0 {
+      parts.push(format!("{} info(s)", self.info));
+    }
+    if self.hint > 0 {
+      parts.push(format!("{} hint(s)", self.hint));
+    }
+    parts.join(", ")
+  }
+}
+
 /// AppError stands for ast-grep command line usage.
 /// It provides abstraction around exit code, context,
 /// message, potential fix and reference link.
@@ -49,7 +82,7 @@ pub enum ErrorContext {
   PatternHasError,
   // Scan
   DuplicateRuleId(String),
-  DiagnosticError(usize),
+  DiagnosticError(DiagnosticCounts),
   RuleNotSpecified,
   RuleNotFound(String),
   // LSP
@@ -79,7 +112,14 @@ impl ErrorContext {
     use ErrorContext::*;
     // reference: https://mariadb.com/kb/en/operating-system-error-codes/
     match self {
-      DiagnosticError(_) => 1,
+      DiagnosticError(counts) => {
+        if counts.error > 0 {
+          1
+        } else {
+          // no error level diagnostic, report findings as a soft warning
+          0
+        }
+      }
       // skip 2 to avoid conflict with clap error code or unexpected error
       ProjectNotExist | LanguageNotSpecified | RuleNotSpecified | RuleNotFound(_) => 3,
       TestFail(_) | TestSnapshotMismatch(_) => 4,
@@ -205,11 +245,23 @@ impl ErrorMessage {
         "Multiple rule files have the same id. Please add a unique `id` field to each rule.",
         CONFIG_GUIDE,
       ),
-      DiagnosticError(num) => Self::new(
-        format!("{num} error(s) found in code."),
-        "Scan succeeded and found error level diagnostics in the codebase.",
-        None,
-      ),
+      DiagnosticError(counts) => {
+        let total = counts.total();
+        let breakdown = counts.summary();
+        if counts.error > 0 {
+          Self::new(
+            format!("{total} issue(s) found in code ({breakdown})."),
+            "Scan succeeded and found error level diagnostics in the codebase.",
+            None,
+          )
+        } else {
+          Self::new(
+            format!("{total} issue(s) found in code ({breakdown})."),
+            "Scan succeeded and found diagnostics in the codebase.",
+            None,
+          )
+        }
+      }
       ParsePattern => Self::new(
         "Cannot parse query as a valid pattern.",
         "The pattern either fails to parse or contains error. Please refer to pattern syntax guide.",
@@ -495,6 +547,41 @@ mod test {
     // Check that it's considered a soft error with exit code 0
     assert_eq!(ErrorContext::ExitInteractiveEditing.exit_code(), 0);
     assert!(ErrorContext::ExitInteractiveEditing.is_soft_error());
+  }
+
+  #[test]
+  fn test_diagnostic_error_reports_all_severities() {
+    let counts = DiagnosticCounts {
+      error: 1,
+      warning: 2,
+      info: 3,
+      hint: 4,
+    };
+    assert_eq!(counts.total(), 10);
+    let ctx = ErrorContext::DiagnosticError(counts);
+    assert_eq!(ErrorContext::DiagnosticError(counts).exit_code(), 1);
+    let message = ctx.to_string();
+    assert!(message.contains("10 issue(s) found in code"), "{message}");
+    assert!(message.contains("1 error(s)"), "{message}");
+    assert!(message.contains("2 warning(s)"), "{message}");
+    assert!(message.contains("3 info(s)"), "{message}");
+    assert!(message.contains("4 hint(s)"), "{message}");
+  }
+
+  #[test]
+  fn test_diagnostic_error_without_errors_is_soft() {
+    let counts = DiagnosticCounts {
+      error: 0,
+      warning: 2,
+      info: 0,
+      hint: 1,
+    };
+    let ctx = ErrorContext::DiagnosticError(counts);
+    assert_eq!(ctx.exit_code(), 0);
+    assert!(ctx.is_soft_error());
+    let message = ctx.to_string();
+    assert!(message.contains("3 issue(s) found in code"), "{message}");
+    assert!(!message.contains("error(s)"), "{message}");
   }
 
   #[test]

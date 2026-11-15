@@ -457,7 +457,9 @@ fn test_severity_threshold_filters_output_and_rule_tally() -> Result<()> {
     .stdout(contains("info-rule").not())
     .stdout(contains("hint-rule").not())
     .stderr(contains("effectiveRuleCount=2,skippedRuleCount=2"))
-    .stderr(contains("1 error(s) found in code"));
+    .stderr(contains(
+      "2 issue(s) found in code (1 error(s), 1 warning(s))",
+    ));
   Ok(())
 }
 
@@ -1121,5 +1123,74 @@ fn test_scan_invalid_rule_id() -> Result<()> {
     .assert()
     .failure()
     .stderr(contains("Cannot infer rule id"));
+  Ok(())
+}
+
+#[test]
+fn test_scan_reports_non_error_issues() -> Result<()> {
+  let dir = create_test_files([
+    ("sgconfig.yml", CONFIG),
+    ("rules/severity.yml", SEVERITY_RULES),
+    ("test.ts", "Some(123)"),
+  ])?;
+  // disable the error-severity rule; scan should still report total issues, but exit successfully
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args([
+      "scan",
+      "--off=error-rule",
+      "--color=never",
+      "--report-style=short",
+    ])
+    .assert()
+    .success()
+    .stdout(contains("warning-rule"))
+    .stdout(contains("error-rule").not())
+    .stderr(contains(
+      "3 issue(s) found in code (1 warning(s), 1 info(s), 1 hint(s))",
+    ));
+
+  // all severities, should report the breakdown and keep exit code 1 for errors
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan", "--color=never", "--report-style=short"])
+    .assert()
+    .failure()
+    .stderr(contains(
+      "4 issue(s) found in code (1 error(s), 1 warning(s), 1 info(s), 1 hint(s))",
+    ));
+  Ok(())
+}
+
+#[test]
+fn test_scan_stdin_reports_issues() -> Result<()> {
+  let inline_rules = "{id: warn-rule, message: a warning, severity: warning, language: ts, rule: {pattern: Some($A)}}";
+  Command::new(cargo_bin!())
+    .args([
+      "scan",
+      "--stdin",
+      "--inline-rules",
+      inline_rules,
+      "--color=never",
+    ])
+    .write_stdin("Some(123)")
+    .assert()
+    .success()
+    .stderr(contains("1 issue(s) found in code (1 warning(s))"));
+
+  let inline_error =
+    "{id: error-rule, message: an error, severity: error, language: ts, rule: {pattern: Some($A)}}";
+  Command::new(cargo_bin!())
+    .args([
+      "scan",
+      "--stdin",
+      "--inline-rules",
+      inline_error,
+      "--color=never",
+    ])
+    .write_stdin("Some(123)")
+    .assert()
+    .failure()
+    .stderr(contains("1 issue(s) found in code (1 error(s))"));
   Ok(())
 }
