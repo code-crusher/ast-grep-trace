@@ -18,7 +18,7 @@ use crate::print::{
   PrintProcessor, Printer, ReportStyle, SimpleFile,
 };
 use crate::utils::RuleOverwrite;
-use crate::utils::{ContextArgs, InputArgs, OutputArgs, OverwriteArgs, filter_file_rule};
+use crate::utils::{ContextArgs, InputArgs, OutputArgs, OverwriteArgs, filter_file_rule_with_path};
 use crate::utils::{ErrorContext as EC, MaxItemCounter};
 use crate::utils::{FileTrace, ScanTrace};
 use crate::utils::{Items, PathWorker, StdInWorker, Worker};
@@ -263,17 +263,21 @@ impl PathWorker for ScanWithConfig {
     path: &Path,
     processor: &P::Processor,
   ) -> Result<Vec<P::Processed>> {
-    let items = filter_file_rule(path, &self.configs, &self.trace)?;
+    // use path relative to project director
+    let abs_path = path.canonicalize()?;
+    let normalized_path = abs_path
+      .strip_prefix(&self.proj_dir)
+      .unwrap_or(path)
+      .to_path_buf();
+    let items =
+      filter_file_rule_with_path(path, normalized_path.clone(), &self.configs, &self.trace)?;
     let mut error_count = 0usize;
     let mut ret = vec![];
     for grep in items {
       let file_content = grep.source();
-      // use path relative to project director
-      let abs_path = path.canonicalize()?;
-      let normalized_path = abs_path.strip_prefix(&self.proj_dir).unwrap_or(path);
       let rules = self
         .configs
-        .get_rule_from_lang(normalized_path, *grep.lang());
+        .get_rule_from_lang(&normalized_path, *grep.lang());
       let mut combined = CombinedScan::new(rules);
       combined.set_unused_suppression_rule(&self.unused_suppression_rule);
       combined.set_no_suppress_all_rule(&self.no_suppress_all_rule);
@@ -383,6 +387,7 @@ impl StdInWorker for ScanStdin {
     let combined = CombinedScan::new(self.rules.iter().collect());
     let grep = lang.ast_grep(src);
     let path = Path::new("STDIN");
+    // stdin has no on-disk path: `path` rules do not match.
     let file_content = grep.source();
     // do not separate_fix rule in stdin mode
     let scanned = combined.scan(&grep, false);

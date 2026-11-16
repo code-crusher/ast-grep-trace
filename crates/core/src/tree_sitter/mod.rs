@@ -1,6 +1,6 @@
 pub mod traversal;
 
-use crate::node::Root;
+pub use crate::node::Root;
 use crate::replacer::Replacer;
 use crate::source::{Content, Doc, Edit, SgNode};
 use crate::{AstGrep, Matcher};
@@ -64,14 +64,29 @@ pub struct StrDoc<L: LanguageExt> {
   pub src: String,
   pub lang: L,
   pub tree: Tree,
+  /// Optional path of the file the source was read from.
+  /// `None` when the source is not associated with a file on disk.
+  pub path: Option<std::path::PathBuf>,
 }
 
 impl<L: LanguageExt> StrDoc<L> {
   pub fn try_new(src: &str, lang: L) -> Result<Self, String> {
+    Self::try_new_with_path(src, lang, None)
+  }
+  pub fn try_new_with_path(
+    src: &str,
+    lang: L,
+    path: Option<std::path::PathBuf>,
+  ) -> Result<Self, String> {
     let src = src.to_string();
     let ts_lang = lang.get_ts_language();
     let tree = parse_lang(|p| p.parse(src.as_bytes(), None), ts_lang).map_err(|e| e.to_string())?;
-    Ok(Self { src, lang, tree })
+    Ok(Self {
+      src,
+      lang,
+      tree,
+      path,
+    })
   }
   pub fn new(src: &str, lang: L) -> Self {
     Self::try_new(src, lang).expect("Parser tree error")
@@ -108,6 +123,9 @@ impl<L: LanguageExt> Doc for StrDoc<L> {
         .utf8_text(self.src.as_bytes())
         .expect("invalid source text encoding"),
     )
+  }
+  fn path(&self) -> Option<&std::path::Path> {
+    self.path.as_deref()
   }
 }
 
@@ -368,6 +386,15 @@ impl<L: LanguageExt> Root<StrDoc<L>> {
     let doc = StrDoc::try_new(src, lang)?;
     Ok(Self { doc })
   }
+  /// Create a [`Root`] from a source string and an associated path.
+  pub fn try_new_with_path(
+    src: &str,
+    lang: L,
+    path: Option<std::path::PathBuf>,
+  ) -> Result<Self, String> {
+    let doc = StrDoc::try_new_with_path(src, lang, path)?;
+    Ok(Self { doc })
+  }
   pub fn get_text(&self) -> &str {
     &self.doc.src
   }
@@ -390,6 +417,7 @@ impl<L: LanguageExt> Root<StrDoc<L>> {
             src: self.doc.src.clone(),
             lang,
             tree,
+            path: self.doc.path.clone(),
           },
         })
       })

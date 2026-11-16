@@ -143,8 +143,9 @@ fn collect_file_stats(
   Ok(())
 }
 
-pub fn filter_file_rule(
+pub fn filter_file_rule_with_path(
   path: &Path,
+  match_path: PathBuf,
   configs: &RuleCollection<SgLang>,
   trace: &ScanTrace,
 ) -> Result<SmallVec<[AstGrep; 1]>> {
@@ -152,7 +153,9 @@ pub fn filter_file_rule(
     return Ok(smallvec![]);
   };
   let file_content = read_file(path)?;
-  let grep = lang.ast_grep(file_content);
+  let doc = StrDoc::try_new_with_path(&file_content, lang, Some(match_path))
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+  let grep = ast_grep_core::AstGrep::doc(doc);
   collect_file_stats(path, lang, configs, trace)?;
   let mut ret = smallvec![grep.clone()];
   if lang.injectable_languages().is_some() {
@@ -174,7 +177,9 @@ pub fn filter_file_pattern<'a>(
   sub_matchers: &'a [(SgLang, Rule)],
 ) -> Result<SmallVec<[MatchUnit<&'a Rule>; 1]>> {
   let file_content = read_file(path)?;
-  let grep = lang.ast_grep(&file_content);
+  let doc = StrDoc::try_new_with_path(&file_content, lang, Some(path.to_path_buf()))
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+  let grep = ast_grep_core::AstGrep::doc(doc);
   let do_match = |ast_grep: AstGrep, matcher: &'a Rule| {
     let fixed = match matcher {
       Rule::Pattern(pat) => pat.fixed_string(),

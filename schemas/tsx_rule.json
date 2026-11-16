@@ -349,6 +349,10 @@
           "description": "`range` accepts a range object.\nthe target node must exactly appear in the range.",
           "$ref": "#/$defs/SerializableRange"
         },
+        "path": {
+          "description": "A Rust regular expression to match the path of the file being linted.\nThe path is only available when ast-grep knows the file on disk;\nthe matcher never matches otherwise.",
+          "type": "string"
+        },
         "inside": {
           "description": "`inside` accepts a relational rule object.\nthe target node must appear inside of another node matching the `inside` sub-rule.",
           "$ref": "#/$defs/Relation"
@@ -767,6 +771,10 @@
         "range": {
           "description": "`range` accepts a range object.\nthe target node must exactly appear in the range.",
           "$ref": "#/$defs/SerializableRange"
+        },
+        "path": {
+          "description": "A Rust regular expression to match the path of the file being linted.\nThe path is only available when ast-grep knows the file on disk;\nthe matcher never matches otherwise.",
+          "type": "string"
         },
         "inside": {
           "description": "`inside` accepts a relational rule object.\nthe target node must appear inside of another node matching the `inside` sub-rule.",

@@ -28,6 +28,7 @@ class RuleWithoutNot(TypedDict, total=False):
     pattern: str | Pattern
     kind: str
     regex: str
+    path: str
     nthChild: int | str | NthChild
     range: RangeRule
 

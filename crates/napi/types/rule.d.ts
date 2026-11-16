@@ -67,6 +67,8 @@ export interface Rule<M extends TypesMap = TypesMap> {
   range?: Range
   /** A Rust regular expression to match the node's text. https://docs.rs/regex/latest/regex/#syntax */
   regex?: string
+  /** A Rust regular expression to match the path of the file being linted. Never matches documents without a file path. */
+  path?: string
   /**
    * `nthChild` accepts number, string or object.
    * It specifies the position in nodes' sibling list. */

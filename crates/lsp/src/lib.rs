@@ -431,7 +431,10 @@ impl<L: LSPLang> Backend<L> {
     text: &str,
   ) -> Option<(VersionedAst<StrDoc<L>>, Vec<Diagnostic>)> {
     let lang = Self::infer_lang_from_uri(uri)?;
-    let root = AstGrep::new(text, lang);
+    let path = uri.to_file_path().map(|p| p.into_owned());
+    let mut doc = StrDoc::try_new(text, lang).ok()?;
+    doc.path = path;
+    let root = AstGrep::doc(doc);
     let mut versioned = VersionedAst {
       version,
       root,

@@ -136,7 +136,7 @@ fn get_root(entry: ignore::DirEntry, lang_option: &LangOption) -> Ret<(AstGrep<J
   let lang = lang_option
     .get_lang(&path)
     .context(anyhow!("file not recognized"))?;
-  let doc = JsDoc::try_new(file_content, lang)?;
+  let doc = JsDoc::try_new(file_content, lang)?.with_path(path.clone());
   Ok((AstGrep::doc(doc), path.to_string_lossy().into()))
 }
 

@@ -116,6 +116,7 @@ pub struct JsDoc {
   lang: NapiLang,
   source: Wrapper,
   tree: tree_sitter::Tree,
+  path: Option<std::path::PathBuf>,
 }
 
 fn parse(
@@ -139,7 +140,18 @@ impl JsDoc {
       inner: src.encode_utf16().collect(),
     };
     let tree = parse(&source, &lang, None)?;
-    Ok(Self { source, lang, tree })
+    Ok(Self {
+      source,
+      lang,
+      tree,
+      path: None,
+    })
+  }
+
+  /// Associate the document with a file path, so rules can match on the file path.
+  pub fn with_path(mut self, path: std::path::PathBuf) -> Self {
+    self.path = Some(path);
+    self
   }
 }
 
@@ -162,6 +174,9 @@ impl Doc for JsDoc {
   }
   fn root_node(&self) -> Node<'_> {
     self.tree.root_node()
+  }
+  fn path(&self) -> Option<&std::path::Path> {
+    self.path.as_deref()
   }
   fn get_node_text<'a>(&'a self, node: &Node) -> Cow<'a, str> {
     let slice = self.source.inner.as_slice();

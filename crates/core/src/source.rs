@@ -142,6 +142,14 @@ pub trait Doc: Clone + 'static {
   fn do_edit(&mut self, edit: &Edit<Self::Source>) -> Result<(), String>;
   fn root_node(&self) -> Self::Node<'_>;
   fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str>;
+  /// The path associated with this document, if it corresponds to a file.
+  ///
+  /// The path is used by file-related rules such as `path` to reason about
+  /// the file the source was loaded from. Documents created from an
+  /// in-memory string (e.g. stdin or editor buffers) may return `None`.
+  fn path(&self) -> Option<&std::path::Path> {
+    None
+  }
 }
 
 pub trait Content: Sized {

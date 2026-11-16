@@ -8,9 +8,10 @@ pub fn create_test_files<'a>(
 ) -> Result<TempDir> {
   let dir = TempDir::new()?;
   for (name, contents) in names_and_contents {
-    if let Some((sub, _)) = name.split_once('/') {
-      let sub_dir = dir.path().join(sub);
-      std::fs::create_dir_all(sub_dir)?;
+    if let Some(parent) = std::path::Path::new(name).parent() {
+      if !parent.as_os_str().is_empty() {
+        std::fs::create_dir_all(dir.path().join(parent))?;
+      }
     }
     let path = dir.path().join(name);
     let mut file = File::create(path.clone())?;

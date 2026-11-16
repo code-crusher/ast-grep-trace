@@ -1123,3 +1123,86 @@ fn test_scan_invalid_rule_id() -> Result<()> {
     .stderr(contains("Cannot infer rule id"));
   Ok(())
 }
+
+const PATH_RULE: &str = "
+id: misplaced-use-case
+message: use-case files must live under application/use-cases/
+severity: warning
+language: TypeScript
+rule:
+  all:
+    - kind: program
+    - path: '(^|/)use-cases/'
+";
+const PATH_RULE_NEGATED: &str = "
+id: misplaced-use-case
+message: use-case files must live under application/use-cases/
+severity: warning
+language: TypeScript
+rule:
+  all:
+    - kind: program
+    - not:
+        path: '(^|/)application/use-cases/'
+    - path: '\\.use-case\\.ts$'
+";
+
+#[test]
+fn test_path_rule_matches_file_path() -> Result<()> {
+  let dir = create_test_files([
+    ("sgconfig.yml", CONFIG),
+    ("rules/path-rule.yml", PATH_RULE),
+    (
+      "application/use-cases/create-user.use-case.ts",
+      "export const a = 1",
+    ),
+    ("services/create-user.use-case.ts", "export const a = 1"),
+  ])?;
+  // the rule only fires for files whose path contains use-cases/
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan", "--json"])
+    .assert()
+    .success()
+    .stdout(contains("create-user.use-case.ts"));
+  Ok(())
+}
+
+#[test]
+fn test_path_rule_reports_wrong_location() -> Result<()> {
+  let dir = create_test_files([
+    ("sgconfig.yml", CONFIG),
+    ("rules/path-rule.yml", PATH_RULE_NEGATED),
+    (
+      "application/use-cases/create-user.use-case.ts",
+      "export const a = 1",
+    ),
+    ("services/create-user.use-case.ts", "export const a = 1"),
+  ])?;
+  let output = Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args(["scan", "--json"])
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+  let json: Value = from_slice(&output)?;
+  let files: Vec<&str> = json
+    .as_array()
+    .expect("should be an array")
+    .iter()
+    .filter_map(|m| m.get("file").and_then(|f| f.as_str()))
+    .collect();
+  assert!(
+    files
+      .iter()
+      .any(|f| f.contains("services/create-user.use-case.ts"))
+  );
+  assert!(
+    !files
+      .iter()
+      .any(|f| f.contains("application/use-cases/create-user.use-case.ts"))
+  );
+  Ok(())
+}
