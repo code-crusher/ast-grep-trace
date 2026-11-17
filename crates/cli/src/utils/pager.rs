@@ -13,7 +13,7 @@ use crossterm::{
   execute,
   terminal::{self, Clear, ClearType, DisableLineWrap, EnableLineWrap},
 };
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::ops::Range;
 use unicode_width::UnicodeWidthChar;
 
@@ -71,11 +71,11 @@ fn run_pager(
           }
           Some(PagerReply::Top) => {
             dirty = view.offset != 0;
-            view.to_top();
+            view.jump_to_top();
           }
           Some(PagerReply::Bottom) => {
             dirty = view.offset != view.max_offset();
-            view.to_bottom();
+            view.jump_to_bottom();
           }
           None => {}
         }
@@ -208,11 +208,11 @@ impl PageView {
     self.offset = offset.min(self.max_offset());
   }
 
-  fn to_top(&mut self) {
+  fn jump_to_top(&mut self) {
     self.offset = 0;
   }
 
-  fn to_bottom(&mut self) {
+  fn jump_to_bottom(&mut self) {
     self.offset = self.max_offset();
   }
 }
@@ -362,11 +362,11 @@ mod test {
 
   #[test]
   fn re_applies_active_style_on_wrapped_rows() {
-    let colored = format!("\x1b[31mabcdef\x1b[0m");
-    let rows = wrap_ansi_lines(&colored, 3);
+    let colored = "\x1b[31mabcdef\x1b[0m";
+    let rows = wrap_ansi_lines(colored, 3);
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0], format!("\x1b[31mabc{ANSI_RESET}"));
-    assert_eq!(rows[1], format!("\x1b[31mdef\x1b[0m"));
+    assert_eq!(rows[1], "\x1b[31mdef\x1b[0m");
   }
 
   #[test]
@@ -402,17 +402,35 @@ mod test {
 
   #[test]
   fn classify_key_keeps_prompt_answers() {
-    assert_eq!(reply(press(KeyCode::Char('y')), "ynaqe\t", Some('y'), 10), Some('y'));
-    assert_eq!(reply(press(KeyCode::Char('q')), "ynaqe\t", Some('y'), 10), Some('q'));
-    assert_eq!(reply(press(KeyCode::Enter), "qe", Some('\n'), 10), Some('\n'));
-    assert_eq!(reply(press(KeyCode::Tab), "ynaqe\t", Some('y'), 10), Some('\t'));
+    assert_eq!(
+      reply(press(KeyCode::Char('y')), "ynaqe\t", Some('y'), 10),
+      Some('y')
+    );
+    assert_eq!(
+      reply(press(KeyCode::Char('q')), "ynaqe\t", Some('y'), 10),
+      Some('q')
+    );
+    assert_eq!(
+      reply(press(KeyCode::Enter), "qe", Some('\n'), 10),
+      Some('\n')
+    );
+    assert_eq!(
+      reply(press(KeyCode::Tab), "ynaqe\t", Some('y'), 10),
+      Some('\t')
+    );
   }
 
   #[test]
   fn classify_key_rejects_letters_outside_the_prompt() {
     // 'j' is a scroll key and must not answer a prompt that does not accept it.
-    assert_eq!(reply(press(KeyCode::Char('j')), "ynaqe\t", Some('y'), 10), None);
-    assert_eq!(reply(press(KeyCode::Char('x')), "ynaqe\t", Some('y'), 10), None);
+    assert_eq!(
+      reply(press(KeyCode::Char('j')), "ynaqe\t", Some('y'), 10),
+      None
+    );
+    assert_eq!(
+      reply(press(KeyCode::Char('x')), "ynaqe\t", Some('y'), 10),
+      None
+    );
   }
 
   #[test]
@@ -458,7 +476,7 @@ mod test {
     assert_eq!(view.max_offset(), 0);
     view.scroll(5);
     assert_eq!(view.visible(), 0..3);
-    view.to_bottom();
+    view.jump_to_bottom();
     assert_eq!(view.offset, 0);
   }
 

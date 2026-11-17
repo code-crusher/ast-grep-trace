@@ -1,7 +1,7 @@
 use super::{ColoredPrinter, Diff, NodeMatch, PrintProcessor, Printer};
 use crate::lang::SgLang;
-use crate::utils::ErrorContext as EC;
 use crate::utils;
+use crate::utils::ErrorContext as EC;
 
 use anyhow::{Context, Result};
 use ast_grep_config::RuleConfig;
