@@ -18,7 +18,12 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
-use utils::{Fixes, RewriteData, convert_match_to_diagnostic, diagnostic_to_code_action};
+use utils::{
+  Fixes, RewriteData, convert_match_to_diagnostic, diagnostic_to_code_action,
+  invalid_rule_diagnostic,
+};
+
+const INVALID_RULE_ID: &str = "ast-grep.invalid-rule";
 
 pub use tower_lsp_server::{LspService, Server};
 
@@ -45,6 +50,8 @@ pub struct Backend<L: LSPLang> {
   rule_finder: Box<dyn Fn() -> anyhow::Result<RuleCollection<L>> + Send + Sync>,
   // store client capabilities to check support
   capabilities: Arc<RwLock<ClientCapabilities>>,
+  // store the error from the latest rule loading attempt, if any
+  last_rule_error: Arc<RwLock<Option<Arc<String>>>>,
 }
 
 const FALLBACK_CODE_ACTION_PROVIDER: Option<CodeActionProviderCapability> =
@@ -234,6 +241,7 @@ impl<L: LSPLang> Backend<L> {
       interner: DashMap::new(),
       rule_finder: Box::new(rule_finder),
       capabilities: Arc::new(RwLock::new(ClientCapabilities::default())),
+      last_rule_error: Arc::new(RwLock::new(None)),
     }
   }
 
@@ -277,11 +285,15 @@ impl<L: LSPLang> Backend<L> {
     &self,
     uri: &Uri,
     root: &AstGrep<StrDoc<L>>,
+    rule_error: Option<&str>,
   ) -> Option<(Vec<Diagnostic>, Fixes)> {
     let path = self.uri_to_relative_path(uri)?;
 
     let rules = self.rules.read().ok()?;
     let mut diagnostics = vec![];
+    if let Some(error) = rule_error {
+      diagnostics.push(invalid_rule_diagnostic(error, root.source()));
+    }
     let mut fixes = Fixes::new();
     let injections = root.get_injections(|lang| L::from_str(lang).ok());
     let docs = std::iter::once(root).chain(injections.iter());
@@ -385,13 +397,24 @@ impl<L: LSPLang> Backend<L> {
     }
   }
 
+  fn set_rule_error(&self, error: Option<String>) {
+    if let Ok(mut guard) = self.last_rule_error.write() {
+      *guard = error.map(Arc::new);
+    }
+  }
+
+  fn current_rule_error(&self) -> Option<Arc<String>> {
+    self.last_rule_error.read().ok().and_then(|guard| guard.clone())
+  }
+
   fn compute_diagnostics(
     &self,
     uri: &Uri,
     versioned: &mut VersionedAst<StrDoc<L>>,
   ) -> Vec<Diagnostic> {
+    let rule_error = self.current_rule_error();
     let (diagnostics, fixes) = self
-      .get_diagnostics(uri, &versioned.root)
+      .get_diagnostics(uri, &versioned.root, rule_error.as_deref().map(String::as_str))
       .unwrap_or_default();
     versioned.notes = self.build_notes(&diagnostics);
     versioned.fixes = fixes;
@@ -487,8 +510,13 @@ impl<L: LSPLang> Backend<L> {
       .map
       .get(uri.as_str())
       .ok_or(LspError::UnsupportedFileType)?;
+    let rule_error = self.current_rule_error();
     let (_diagnostics, fixes) = self
-      .get_diagnostics(&uri, &versioned.root)
+      .get_diagnostics(
+        &uri,
+        &versioned.root,
+        rule_error.as_deref().map(String::as_str),
+      )
       .ok_or(LspError::NoActionableFix)?;
 
     let mut entries: Vec<_> = fixes.iter().collect();
@@ -712,7 +740,7 @@ impl<L: LSPLang> Backend<L> {
             .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
           *rules = new_rules;
         }
-
+        self.set_rule_error(None);
         self
           .client
           .log_message(
@@ -722,6 +750,7 @@ impl<L: LSPLang> Backend<L> {
           .await;
       }
       Err(error) => {
+        self.set_rule_error(Some(format!("{error:#}")));
         // popup message
         self
           .client

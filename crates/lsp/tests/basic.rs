@@ -793,3 +793,207 @@ pub fn test_framed_codec() {
   let decoded = codec.decode(&mut buf).unwrap().unwrap();
   assert_eq!(decoded, msg);
 }
+
+const FAILING_RULE_YAML_ERROR: &str = "Fail to parse yaml as RuleConfig\nmissing field `id` at line 11 column 1";
+
+const VALID_CONSOLE_YAML: &str = r"
+id: no-console-rule
+message: No console.log
+severity: warning
+language: TypeScript
+rule:
+  pattern: console.log($$$A)
+";
+
+// Create an LSP server whose rule finder fails until `should_fail` is set to false
+fn create_lsp_with_toggleable_rules(
+  should_fail: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Framed<DuplexStream, LspCodec> {
+  let base = Path::new("./").to_path_buf();
+  let rule_finder = move || {
+    if should_fail.load(std::sync::atomic::Ordering::SeqCst) {
+      anyhow::bail!("{FAILING_RULE_YAML_ERROR}");
+    }
+    let globals = GlobalRules::default();
+    let config: RuleConfig<SupportLang> = from_yaml_string(VALID_CONSOLE_YAML, &globals)
+      .unwrap()
+      .pop()
+      .unwrap();
+    let rc: RuleCollection<SupportLang> = RuleCollection::try_new(vec![config]).unwrap();
+    Ok(rc)
+  };
+  let (service, socket) =
+    LspService::build(|client| Backend::new(client, base, rule_finder)).finish();
+  let (client_write, server_read) = duplex(16384);
+  let (r, w) = split(server_read);
+  tokio::spawn(Server::new(r, w, socket).serve(service));
+
+  Framed::new(client_write, LspCodec)
+}
+
+async fn finish_initialize(client: &mut Framed<DuplexStream, LspCodec>) {
+  let init_call_id = allocate_method_call_id();
+  let initialize = serde_json::json!({
+      "jsonrpc": "2.0",
+      "id": init_call_id,
+      "method": "initialize",
+      "params": {
+          "capabilities": {
+            "workspace": {
+              "workspaceFolders": true,
+              "didChangeWatchedFiles": {
+                "dynamicRegistration": true
+              }
+            }
+          }
+      }
+  });
+  client.send(initialize).await.unwrap();
+  wait_for_response(client, init_call_id).await.unwrap();
+
+  client
+    .send(serde_json::json!({
+      "jsonrpc": "2.0",
+      "method": "initialized",
+      "params": {}
+    }))
+    .await
+    .unwrap();
+}
+
+// Wait for a server message matching `predicate`, answering server->client requests along the way
+async fn wait_for_server_message(
+  client: &mut Framed<DuplexStream, LspCodec>,
+  predicate: impl Fn(&serde_json::Value) -> bool,
+) -> Option<serde_json::Value> {
+  for _ in 0..20 {
+    if let Ok(Some(Ok(msg))) =
+      tokio::time::timeout(std::time::Duration::from_secs(2), client.next()).await
+    {
+      if msg.get("id").is_some() && msg.get("method").is_some() {
+        let result = match msg["method"].as_str() {
+          Some("workspace/workspaceFolders") => serde_json::json!([{
+            "uri": "file:///Users/codes/ast-grep-vscode",
+            "name": "ast-grep-vscode"
+          }]),
+          _ => serde_json::json!(null),
+        };
+        let response = serde_json::json!({
+          "jsonrpc": "2.0",
+          "id": msg["id"].clone(),
+          "result": result,
+        });
+        client.send(response).await.unwrap();
+        continue;
+      }
+      if predicate(&msg) {
+        return Some(msg);
+      }
+    }
+  }
+  None
+}
+
+#[tokio::test]
+async fn test_invalid_rule_shows_diagnostic() {
+  let should_fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+  let mut client = create_lsp_with_toggleable_rules(should_fail);
+  finish_initialize(&mut client).await;
+  // wait until the server reports the rule loading failure
+  let error_message = wait_for_server_message(&mut client, |msg| {
+    msg.get("method") == Some(&serde_json::json!("window/showMessage"))
+  })
+  .await
+  .expect("expected the server to report the rule loading failure");
+  assert!(
+    error_message["params"]["message"]
+      .as_str()
+      .unwrap()
+      .contains("failed to load rules")
+      || error_message["params"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Failed to load rules")
+  );
+
+  let file_uri = "file:///Users/codes/ast-grep-vscode/test.ts";
+  let file_content = "console.log('Hello, world!')\n";
+  send_did_open_framed(&mut client, file_uri, "typescript", file_content).await;
+
+  let diagnostics = wait_for_diagnostics(&mut client)
+    .await
+    .expect("No diagnostics received");
+  let diagnostics = diagnostics
+    .as_array()
+    .expect("Diagnostics should be an array");
+  assert_eq!(diagnostics.len(), 1, "Expected 1 invalid rule diagnostic");
+  let diagnostic = &diagnostics[0];
+  assert_eq!(diagnostic["code"], "ast-grep.invalid-rule");
+  assert_eq!(diagnostic["severity"], 1, "Invalid rule should be an error");
+  assert_eq!(diagnostic["source"], "ast-grep");
+  assert_eq!(diagnostic["range"]["start"]["line"], 0);
+  assert_eq!(diagnostic["range"]["start"]["character"], 0);
+  assert!(
+    diagnostic["message"]
+      .as_str()
+      .unwrap()
+      .contains(FAILING_RULE_YAML_ERROR),
+    "diagnostic message should contain the rule loading error, got: {}",
+    diagnostic["message"]
+  );
+}
+
+#[tokio::test]
+async fn test_invalid_rule_diagnostic_clears_after_rules_reload() {
+  let should_fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+  let mut client = create_lsp_with_toggleable_rules(should_fail.clone());
+  finish_initialize(&mut client).await;
+  wait_for_server_message(&mut client, |msg| {
+    msg.get("method") == Some(&serde_json::json!("window/showMessage"))
+  })
+  .await
+  .expect("expected the server to report the rule loading failure");
+
+  let file_uri = "file:///Users/codes/ast-grep-vscode/test.ts";
+  let file_content = "console.log('Hello, world!')\n";
+  send_did_open_framed(&mut client, file_uri, "typescript", file_content).await;
+
+  let diagnostics = wait_for_diagnostics(&mut client)
+    .await
+    .expect("No diagnostics received");
+  assert_eq!(diagnostics.as_array().unwrap().len(), 1);
+  assert_eq!(diagnostics[0]["code"], "ast-grep.invalid-rule");
+
+  // fix the rules and trigger a reload through a file watcher notification
+  should_fail.store(false, std::sync::atomic::Ordering::SeqCst);
+  let change_notification = serde_json::json!({
+    "jsonrpc": "2.0",
+    "method": "workspace/didChangeWatchedFiles",
+    "params": {
+      "changes": [
+        {
+          "uri": "file:///Users/codes/ast-grep-vscode/sgconfig.yml",
+          "type": 2
+        }
+      ]
+    }
+  });
+  client.send(change_notification).await.unwrap();
+
+  let diagnostics = wait_for_diagnostics(&mut client)
+    .await
+    .expect("No diagnostics received after rule reload");
+  let diagnostics = diagnostics
+    .as_array()
+    .expect("Diagnostics should be an array");
+  assert!(
+    diagnostics
+      .iter()
+      .all(|d| d["code"] != "ast-grep.invalid-rule"),
+    "invalid rule diagnostic should be cleared after rules reload, got: {diagnostics:?}"
+  );
+  assert!(
+    diagnostics.iter().any(|d| d["code"] == "no-console-rule"),
+    "expected diagnostics from the reloaded rules, got: {diagnostics:?}"
+  );
+}

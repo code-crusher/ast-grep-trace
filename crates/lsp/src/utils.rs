@@ -206,6 +206,33 @@ fn get_node_range_and_related_info<L: LanguageExt>(
   (get_primary_label(node_match, &labels), related_information)
 }
 
+/// Build a diagnostic shown at the top of the file when ast-grep fails
+/// to load its rules, so users know linting is disabled instead of
+/// silently seeing zero diagnostics.
+pub fn invalid_rule_diagnostic(error: &str, source: &str) -> Diagnostic {
+  // underline the first line, or a zero-width range for empty files
+  let first_line = source.lines().next().unwrap_or("");
+  let end = first_line.encode_utf16().count() as u32;
+  Diagnostic {
+    range: Range {
+      start: Position::new(0, 0),
+      end: Position::new(0, end),
+    },
+    severity: Some(DiagnosticSeverity::ERROR),
+    code: Some(NumberOrString::String(
+      crate::INVALID_RULE_ID.to_string(),
+    )),
+    code_description: url_to_code_description(&Some(
+      "https://ast-grep.github.io/guide/rule-config.html".to_string(),
+    )),
+    message: format!("ast-grep failed to load rules: {error}"),
+    source: Some(String::from("ast-grep")),
+    tags: None,
+    related_information: None,
+    data: None,
+  }
+}
+
 pub fn convert_match_to_diagnostic<L: LanguageExt>(
   uri: &Uri,
   node_match: &NodeMatch<StrDoc<L>>,
