@@ -103,11 +103,7 @@ impl TestSnapshot {
       }));
     };
     // apply the fix to the first match that satisfies the fix constraints
-    let matches: Vec<_> = sg
-      .root()
-      .dfs()
-      .filter_map(|n| rule.match_node(n))
-      .collect();
+    let matches: Vec<_> = sg.root().dfs().filter_map(|n| rule.match_node(n)).collect();
     let applicable = matches.into_iter().find(|nm| fix.is_applicable(nm));
     let Some(nm) = applicable else {
       return Ok(Some(Self {
@@ -195,7 +191,6 @@ fix:
     assert_eq!(snapshot.fixed, None);
     Ok(())
   }
-
 
   #[test]
   fn test_generate() -> Result<()> {
