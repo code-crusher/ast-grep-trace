@@ -132,28 +132,39 @@ impl ColoredPrinter<StandardStream> {
     ColoredPrinter::new(StandardStream::stdout(color)).color(color)
   }
 
-  /// Print the title of fixes
-  pub fn print_diff_title(&mut self, diffs: &[Option<&str>], index: usize) -> Result<()> {
-    if diffs.len() <= 1 {
-      return Ok(());
-    }
-    let note_style = self.styles.rule.note;
-    let hunk_style = self.styles.diff.hunk_header;
-    let select_style = self.styles.diff.select_fix;
-    writeln!(self.writer, "{}", note_style.paint("Switch fix by [tab]:"))?;
-    for (i, title) in diffs.iter().enumerate() {
-      let title = title.unwrap_or("No title");
-      if i == index {
-        let arrow = hunk_style.paint("⇥");
-        let title = select_style.paint(title);
-        writeln!(self.writer, "{arrow} {title}")?;
-      } else {
-        writeln!(self.writer, "  {title}")?;
-      }
-    }
-    writeln!(self.writer)?;
-    Ok(())
+  /// Render the title of fixes into a buffer, e.g. to page it together with the diff.
+  pub fn render_diff_title(&self, diffs: &[Option<&str>], index: usize) -> Result<Buffer> {
+    let mut buffer = create_buffer(self.writer.supports_color());
+    write_diff_title(&mut buffer, &self.styles, diffs, index)?;
+    Ok(buffer)
   }
+}
+
+fn write_diff_title<W: WriteColor>(
+  writer: &mut W,
+  styles: &PrintStyles,
+  diffs: &[Option<&str>],
+  index: usize,
+) -> Result<()> {
+  if diffs.len() <= 1 {
+    return Ok(());
+  }
+  let note_style = styles.rule.note;
+  let hunk_style = styles.diff.hunk_header;
+  let select_style = styles.diff.select_fix;
+  writeln!(writer, "{}", note_style.paint("Switch fix by [tab]:"))?;
+  for (i, title) in diffs.iter().enumerate() {
+    let title = title.unwrap_or("No title");
+    if i == index {
+      let arrow = hunk_style.paint("⇥");
+      let title = select_style.paint(title);
+      writeln!(writer, "{arrow} {title}")?;
+    } else {
+      writeln!(writer, "  {title}")?;
+    }
+  }
+  writeln!(writer)?;
+  Ok(())
 }
 
 fn create_buffer(color: bool) -> Buffer {

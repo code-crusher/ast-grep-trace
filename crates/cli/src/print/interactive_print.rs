@@ -1,7 +1,7 @@
 use super::{ColoredPrinter, Diff, NodeMatch, PrintProcessor, Printer};
 use crate::lang::SgLang;
 use crate::utils::ErrorContext as EC;
-use crate::utils::{self, clear};
+use crate::utils;
 
 use anyhow::{Context, Result};
 use ast_grep_config::RuleConfig;
@@ -37,20 +37,21 @@ impl InteractivePrinter {
     }
   }
 
-  fn prompt_edit(&self) -> char {
+  fn prompt_edit(&self, content: &str) -> char {
     if self.accept_all {
       return 'a';
     }
     const EDIT_PROMPT: &str = "Accept? [y]es/[↵], [n]o, [a]ll, [q]uit, [e]dit";
-    utils::prompt(EDIT_PROMPT, "ynaqe\t", Some('y')).expect("Error happened during prompt")
+    utils::prompt_with_pager(content, EDIT_PROMPT, "ynaqe\t", Some('y'))
+      .expect("Error happened during prompt")
   }
 
-  fn prompt_view(&self) -> char {
+  fn prompt_view(&self, content: &str) -> char {
     if self.accept_all {
       return '\n';
     }
     const VIEW_PROMPT: &str = "Next[enter], Quit[q], Edit[e]";
-    utils::prompt(VIEW_PROMPT, "qe", Some('\n')).expect("cannot fail")
+    utils::prompt_with_pager(content, VIEW_PROMPT, "qe", Some('\n')).expect("cannot fail")
   }
 
   fn rewrite_action(&self, diffs: Diffs<()>, path: &Path) -> Result<()> {
@@ -76,8 +77,8 @@ impl InteractivePrinter {
       return self.inner.process(inner);
     }
     utils::run_in_alternate_screen(|| {
-      self.inner.process(inner)?;
-      let resp = self.prompt_view();
+      let content = String::from_utf8_lossy(inner.as_slice()).into_owned();
+      let resp = self.prompt_view(&content);
       if resp == 'q' {
         Err(anyhow::anyhow!(EC::ExitInteractiveEditing))
       } else if resp == 'e' {
@@ -363,13 +364,10 @@ fn print_diff_and_prompt_action(
     let titles: Vec<_> = to_confirm.iter().map(|d| d.title.as_deref()).collect();
     let ret = loop {
       let confirmed = to_confirm[index].clone();
-      let display = display[index].clone();
-      interactive.inner.process(display)?;
-      interactive.inner.print_diff_title(&titles, index)?;
-      break match interactive.prompt_edit() {
+      let content = render_page(&interactive.inner, &display[index], &titles, index)?;
+      break match interactive.prompt_edit(&content) {
         '\t' => {
           index = (index + 1) % len;
-          clear()?;
           continue;
         }
         'y' => InteractionChoice::Yes(confirmed),
@@ -386,6 +384,19 @@ fn print_diff_and_prompt_action(
     };
     Ok(ret)
   })
+}
+
+/// Combine a rendered diff with its fix titles so both can be paged together.
+fn render_page(
+  printer: &InnerPrinter,
+  display: &Buffer,
+  titles: &[Option<&str>],
+  index: usize,
+) -> Result<String> {
+  let mut content = String::from_utf8_lossy(display.as_slice()).into_owned();
+  let title = printer.render_diff_title(titles, index)?;
+  content.push_str(&String::from_utf8_lossy(title.as_slice()));
+  Ok(content)
 }
 
 fn apply_rewrite(diffs: Diffs<()>) -> String {
@@ -469,6 +480,32 @@ language: TypeScript
       path: PathBuf::new(),
       contents,
     }
+  }
+
+  #[test]
+  fn test_render_page_appends_fix_titles() {
+    let printer = ColoredPrinter::stdout(codespan_reporting::term::termcolor::ColorChoice::Never);
+    let mut display = Buffer::no_color();
+    display
+      .write_all(b"diff body\n")
+      .expect("writing to buffer cannot fail");
+    let titles = [Some("first fix"), Some("second fix")];
+    let content = render_page(&printer, &display, &titles, 1).expect("render cannot fail");
+    assert!(content.starts_with("diff body\n"));
+    assert!(content.contains("Switch fix by [tab]:"));
+    assert!(content.contains("first fix"));
+    assert!(content.contains("second fix"));
+  }
+
+  #[test]
+  fn test_render_page_without_titles_only_has_diff() {
+    let printer = ColoredPrinter::stdout(codespan_reporting::term::termcolor::ColorChoice::Never);
+    let mut display = Buffer::no_color();
+    display
+      .write_all(b"diff body\n")
+      .expect("writing to buffer cannot fail");
+    let content = render_page(&printer, &display, &[None], 0).expect("render cannot fail");
+    assert_eq!(content, "diff body\n");
   }
 
   #[test]

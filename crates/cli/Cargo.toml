@@ -53,6 +53,7 @@ serde-sarif = "0.8.0"
 similar = { version = "3.0.0", features = ["inline"] }
 smallvec = "1.13.2"
 tempfile = "3.10.1"
+unicode-width = "0.2.0"
 tokio = { version = "1.37.0", features = ["rt-multi-thread", "io-std"] }
 clap_complete = "4.5.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
