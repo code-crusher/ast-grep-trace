@@ -1126,6 +1126,12 @@
         "expandStart": {
           "$ref": "#/$defs/Relation"
         },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SerializableRule"
+          }
+        },
         "title": {
           "type": [
             "string",

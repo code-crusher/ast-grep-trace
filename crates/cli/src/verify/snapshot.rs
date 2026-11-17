@@ -1,6 +1,7 @@
 use crate::lang::SgLang;
 use anyhow::{Result, anyhow};
 use ast_grep_config::{Label, LabelStyle, RuleConfig};
+use ast_grep_core::matcher::MatcherExt;
 use ast_grep_core::{
   Doc,
   tree_sitter::{LanguageExt, StrDoc},
@@ -101,8 +102,21 @@ impl TestSnapshot {
         labels,
       }));
     };
-    let changed = sg.replace(rule, fix).map_err(|e| anyhow!(e))?;
-    debug_assert!(changed);
+    // apply the fix to the first match that satisfies the fix constraints
+    let matches: Vec<_> = sg
+      .root()
+      .dfs()
+      .filter_map(|n| rule.match_node(n))
+      .collect();
+    let applicable = matches.into_iter().find(|nm| fix.is_applicable(nm));
+    let Some(nm) = applicable else {
+      return Ok(Some(Self {
+        fixed: None,
+        labels,
+      }));
+    };
+    let edit = nm.make_edit(rule, fix);
+    sg.edit(edit).map_err(|e| anyhow!(e))?;
     Ok(Some(Self {
       fixed: Some(sg.source().to_string()),
       labels,
@@ -146,6 +160,42 @@ where
 mod tests {
   use super::*;
   use crate::verify::test::{TEST_RULE, get_rule_config};
+
+  fn get_fix_constraint_rule_config() -> RuleConfig<SgLang> {
+    use ast_grep_config::{GlobalRules, from_str};
+    let globals = GlobalRules::default();
+    let yaml = format!(
+      "
+id: {TEST_RULE}
+message: test
+severity: hint
+language: TypeScript
+rule:
+  pattern: log($A)
+fix:
+  template: 'logger($A)'
+  constraints:
+    A: {{kind: number}}
+"
+    );
+    let inner: ast_grep_config::SerializableRuleConfig<SgLang> = from_str(&yaml).unwrap();
+    RuleConfig::try_from(inner, &globals).unwrap()
+  }
+
+  #[test]
+  fn test_generate_fix_constraints() -> Result<()> {
+    let rule_config = get_fix_constraint_rule_config();
+    // constraint satisfied: the fix is applied
+    let result = TestSnapshot::generate(&rule_config, "log(123);")?;
+    let snapshot = result.expect("rule should match");
+    assert_eq!(snapshot.fixed.as_deref(), Some("logger(123);"));
+    // constraint violated: rule still matches but no fix is recorded
+    let result = TestSnapshot::generate(&rule_config, "log(a);")?;
+    let snapshot = result.expect("rule should match");
+    assert_eq!(snapshot.fixed, None);
+    Ok(())
+  }
+
 
   #[test]
   fn test_generate() -> Result<()> {

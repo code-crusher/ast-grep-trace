@@ -453,15 +453,15 @@ language: TypeScript
     let contents = Visitor::new(&matcher)
       .reentrant(false)
       .visit(root)
-      .map(|nm| {
-        let diff = Diff::generate(nm, &matcher, fixer);
-        smallvec![InteractiveDiff {
+      .filter_map(|nm| {
+        let diff = Diff::generate(nm, &matcher, fixer)?;
+        Some(smallvec![InteractiveDiff {
           first_line: 0,
           range: diff.range,
           replacement: diff.replacement,
           title: diff.title,
           display: (),
-        }]
+        }])
       })
       .collect();
     Diffs {

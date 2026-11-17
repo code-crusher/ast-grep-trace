@@ -173,7 +173,7 @@ fn test_print_diffs() {
     let root = grep.root();
     let matches = root.find_all(pattern);
     let diffs = matches
-      .map(|n| Diff::generate(n, &pattern, &fixer))
+      .filter_map(|n| Diff::generate(n, &pattern, &fixer))
       .collect();
     let buffer = printer
       .get_processor()
@@ -264,7 +264,10 @@ fix: '{rewrite}'"
   let fixer = rule.fixer.first().expect("should have fixer");
   let root = grep.root();
   let matches = root.find_all(&rule.matcher);
-  let diffs = matches.map(|n| (Diff::generate(n, &pattern, fixer), &rule));
+  let diffs = matches.filter_map(|n| {
+    let diff = Diff::generate(n, &pattern, fixer)?;
+    Some((diff, &rule))
+  });
   let buffer = printer
     .get_processor()
     .print_rule_diffs(diffs.collect(), Path::new("test.tsx"))

@@ -1,6 +1,6 @@
 use crate::DeserializeEnv;
 use crate::maybe::Maybe;
-use crate::rule::{Relation, Rule, RuleSerializeError, StopBy};
+use crate::rule::{Relation, Rule, RuleSerializeError, SerializableRule, StopBy};
 use crate::transform::Transformation;
 use ast_grep_core::replacer::{Content, Replacer, TemplateFix, TemplateFixError};
 use ast_grep_core::{Doc, Language, Matcher, NodeMatch};
@@ -29,6 +29,8 @@ pub struct SerializableFixConfig {
   expand_end: Maybe<Relation>,
   #[serde(default, skip_serializing_if = "Maybe::is_absent")]
   expand_start: Maybe<Relation>,
+  #[serde(default, skip_serializing_if = "Maybe::is_absent")]
+  constraints: Maybe<HashMap<String, SerializableRule>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   title: Option<String>,
 }
@@ -39,10 +41,29 @@ pub enum FixerError {
   InvalidTemplate(#[from] TemplateFixError),
   #[error("Fixer expansion contains invalid rule.")]
   WrongExpansion(#[from] RuleSerializeError),
+  #[error("Fixer constraints contain invalid rule.")]
+  WrongConstraints(#[source] RuleSerializeError),
   #[error("Rewriter must have exactly one fixer.")]
   InvalidRewriter,
   #[error("Fixer in list must have title.")]
   MissingTitle,
+}
+
+fn parse_constraints<L: Language>(
+  maybe: &Maybe<HashMap<String, SerializableRule>>,
+  env: &DeserializeEnv<L>,
+) -> Result<HashMap<String, Rule>, FixerError> {
+  let mut constraints = HashMap::new();
+  let Maybe::Present(serde_cons) = maybe else {
+    return Ok(constraints);
+  };
+  for (key, ser) in serde_cons {
+    let constraint = env
+      .deserialize_rule(ser.clone())
+      .map_err(FixerError::WrongConstraints)?;
+    constraints.insert(key.to_string(), constraint);
+  }
+  Ok(constraints)
 }
 
 struct Expansion {
@@ -69,6 +90,7 @@ pub struct Fixer {
   template: TemplateFix,
   expand_start: Option<Expansion>,
   expand_end: Option<Expansion>,
+  constraints: HashMap<String, Rule>,
   title: Option<String>,
 }
 
@@ -82,10 +104,12 @@ impl Fixer {
       template: fix,
       expand_end,
       expand_start,
+      constraints,
       title,
     } = serialized;
     let expand_start = Expansion::parse(expand_start, env)?;
     let expand_end = Expansion::parse(expand_end, env)?;
+    let constraints = parse_constraints(constraints, env)?;
     let template = if let Some(trans) = transform {
       let keys: Vec<_> = trans.keys().cloned().collect();
       TemplateFix::with_transform(fix, &env.lang, &keys)
@@ -96,6 +120,7 @@ impl Fixer {
       template,
       expand_start,
       expand_end,
+      constraints,
       title: title.clone(),
     })
   }
@@ -146,6 +171,7 @@ impl Fixer {
       template,
       expand_end: None,
       expand_start: None,
+      constraints: HashMap::new(),
       title: None,
     })
   }
@@ -156,6 +182,7 @@ impl Fixer {
       template,
       expand_start: None,
       expand_end: None,
+      constraints: HashMap::new(),
       title: None,
     })
   }
@@ -166,6 +193,21 @@ impl Fixer {
 
   pub(crate) fn used_vars(&self) -> HashSet<&str> {
     self.template.used_vars()
+  }
+
+  pub(crate) fn constraint_vars(&self) -> impl Iterator<Item = &str> {
+    self.constraints.keys().map(|s| s.as_str())
+  }
+
+  /// Returns whether the fixer can generate a fix for the matched node.
+  /// A fixer with `constraints` only applies when every constraint
+  /// is satisfied by the matched meta-variables.
+  pub fn is_applicable<D: Doc>(&self, nm: &NodeMatch<'_, D>) -> bool {
+    if self.constraints.is_empty() {
+      return true;
+    }
+    let mut env = nm.get_env().clone();
+    env.match_constraints(&self.constraints)
   }
 }
 
@@ -268,6 +310,7 @@ mod test {
     let config = SerializableFixConfig {
       expand_end: Maybe::Present(relation),
       expand_start: Maybe::Absent,
+      constraints: Maybe::Absent,
       template: "abcd".to_string(),
       title: None,
     };
@@ -295,6 +338,7 @@ mod test {
     let config = SerializableFixConfig {
       expand_end: Maybe::Present(expand_end),
       expand_start: Maybe::Absent,
+      constraints: Maybe::Absent,
       template: "var $A = 456".to_string(),
       title: None,
     };
@@ -313,6 +357,7 @@ mod test {
     let config = SerializableFixConfig {
       expand_end: Maybe::Present(expand_end),
       expand_start: Maybe::Absent,
+      constraints: Maybe::Absent,
       template: "c: 456".to_string(),
       title: None,
     };
@@ -348,6 +393,60 @@ mod test {
     let env = DeserializeEnv::new(TypeScript::Tsx);
     let ret = Fixer::parse(&config, &env, &Some(Default::default()));
     assert!(ret.is_err());
+    Ok(())
+  }
+
+  #[test]
+  fn test_deserialize_fix_constraints() -> Result<(), serde_saphyr::Error> {
+    let src = r"
+template: 'abc'
+constraints:
+  A:
+    kind: number
+";
+    let SerializableFixer::Config(cfg) = from_str(src)? else {
+      panic!("wrong parsing")
+    };
+    assert_eq!(cfg.template, "abc");
+    let Maybe::Present(constraints) = cfg.constraints else {
+      panic!("wrong parsing")
+    };
+    let rule = constraints.get("A").expect("should have A");
+    assert_eq!(rule.kind, Maybe::Present("number".to_string()));
+    Ok(())
+  }
+
+  #[test]
+  fn test_fix_constraints_applicability() -> Result<(), FixerError> {
+    let config: SerializableFixer = from_str(
+      r"
+template: 'log($A)'
+constraints:
+  A:
+    kind: number",
+    )
+    .expect("should parse");
+    let env = DeserializeEnv::new(TypeScript::Tsx);
+    let fixer = Fixer::parse(&config, &env, &None)?.remove(0);
+    let grep = TypeScript::Tsx.ast_grep("log(123)");
+    let nm = grep.root().find("log($A)").expect("should match");
+    assert!(fixer.is_applicable(&nm));
+    let replacement = fixer.generate_replacement(&nm);
+    assert_eq!(String::from_utf8_lossy(&replacement), "log(123)");
+    let grep = TypeScript::Tsx.ast_grep("log(a)");
+    let nm = grep.root().find("log($A)").expect("should match");
+    assert!(!fixer.is_applicable(&nm));
+    Ok(())
+  }
+
+  #[test]
+  fn test_no_constraints_always_applicable() -> Result<(), FixerError> {
+    let config: SerializableFixer = from_str("template: 'abc'").expect("should parse");
+    let env = DeserializeEnv::new(TypeScript::Tsx);
+    let fixer = Fixer::parse(&config, &env, &None)?.remove(0);
+    let grep = TypeScript::Tsx.ast_grep("log(a)");
+    let nm = grep.root().find("log($A)").expect("should match");
+    assert!(fixer.is_applicable(&nm));
     Ok(())
   }
 }

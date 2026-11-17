@@ -552,7 +552,7 @@ mod test {
       let matches = root.find_all(pattern);
       let fixer = Fixer::from_str(replace, &lang).expect("should work");
       let diffs = matches
-        .map(|m| Diff::generate(m, &pattern, &fixer))
+        .filter_map(|m| Diff::generate(m, &pattern, &fixer))
         .collect();
       printer.before_print().unwrap();
       let buffer = printer

@@ -83,16 +83,26 @@ pub struct Diff<'n> {
 }
 
 impl<'n> Diff<'n> {
-  pub fn generate(node_match: NodeMatch<'n>, matcher: &impl Matcher, rewrite: &Fixer) -> Self {
+  /// Generates the diff for applying the fixer to the matched node.
+  /// Returns `None` if the fixer's constraints are not satisfied,
+  /// in which case the match should be reported without a fix.
+  pub fn generate(
+    node_match: NodeMatch<'n>,
+    matcher: &impl Matcher,
+    rewrite: &Fixer,
+  ) -> Option<Self> {
+    if !rewrite.is_applicable(&node_match) {
+      return None;
+    }
     let edit = node_match.make_edit(matcher, rewrite);
     let replacement = String::from_utf8(edit.inserted_text).unwrap();
-    Self {
+    Some(Self {
       node_match,
       replacement,
       range: edit.position..edit.position + edit.deleted_length,
       additional_fixes: None,
       title: rewrite.title().map(|t| t.to_string()),
-    }
+    })
   }
 
   pub fn multiple(
@@ -100,8 +110,8 @@ impl<'n> Diff<'n> {
     matcher: &impl Matcher,
     fixers: &[Fixer],
   ) -> Option<Self> {
-    let fixer = fixers.first()?;
-    let mut ret = Self::generate(node_match.clone(), matcher, fixer);
+    let fixer = fixers.iter().find(|f| f.is_applicable(&node_match))?;
+    let mut ret = Self::generate(node_match.clone(), matcher, fixer)?;
     // no additional fixes
     if fixers.len() == 1 {
       return Some(ret);
@@ -109,6 +119,7 @@ impl<'n> Diff<'n> {
     let additional = fixers
       .iter()
       .skip(1)
+      .filter(|f| f.is_applicable(&node_match))
       .map(|f| {
         let edit = node_match.make_edit(matcher, f);
         AdditionalFix {
@@ -119,6 +130,9 @@ impl<'n> Diff<'n> {
       })
       .collect::<Vec<_>>()
       .into_boxed_slice();
+    if additional.is_empty() {
+      return Some(ret);
+    }
     ret.additional_fixes = Some(additional);
     Some(ret)
   }

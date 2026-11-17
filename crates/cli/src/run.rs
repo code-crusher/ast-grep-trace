@@ -414,7 +414,7 @@ impl StdInWorker for RunWithSpecificLang {
     let rewrite = &self.rewrite;
     let path = Path::new("STDIN");
     let processed = if let Some(rewrite) = rewrite {
-      let diffs = matches.map(|m| Diff::generate(m, &self.rule, rewrite));
+      let diffs = matches.filter_map(|m| Diff::generate(m, &self.rule, rewrite));
       processor.print_diffs(diffs.collect(), path)?
     } else {
       processor.print_matches(matches.collect(), path)?
@@ -439,7 +439,7 @@ fn match_one_file<T, P: PrintProcessor<T>>(
     return Ok(None);
   }
   let ret = if let Some(rewrite) = rewrite {
-    let diffs = matches.map(|m| Diff::generate(m, matcher, rewrite));
+    let diffs = matches.filter_map(|m| Diff::generate(m, matcher, rewrite));
     processor.print_diffs(diffs.collect(), path)?
   } else {
     processor.print_matches(matches.collect(), path)?

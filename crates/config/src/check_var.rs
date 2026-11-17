@@ -34,7 +34,8 @@ pub fn check_rule_with_hint(rule: &RuleCore, hint: CheckHint) -> RResult<()> {
 pub fn check_fix(rule: &RuleCore, fixer: &[Fixer]) -> RResult<()> {
   // TODO: check_vars are called twice
   let vars = check_vars(rule)?;
-  check_var_in_fix(vars, fixer)?;
+  let node_vars = rule.defined_node_vars();
+  check_var_in_fix(vars, node_vars, fixer)?;
   Ok(())
 }
 
@@ -45,10 +46,12 @@ pub fn check_rewriter_fix(
 ) -> RResult<()> {
   // TODO: check_vars are called twice
   let mut vars = check_vars(rule)?;
+  let mut node_vars = rule.defined_node_vars();
   for v in upper_vars {
     vars.insert(v);
+    node_vars.insert(v);
   }
-  check_var_in_fix(vars, fixer)?;
+  check_var_in_fix(vars, node_vars, fixer)?;
   Ok(())
 }
 
@@ -122,10 +125,20 @@ fn check_var_in_transform<'r>(
   Ok(vars)
 }
 
-fn check_var_in_fix(vars: HashSet<&str>, fixers: &[Fixer]) -> RResult<()> {
+fn check_var_in_fix(
+  vars: HashSet<&str>,
+  node_vars: HashSet<&str>,
+  fixers: &[Fixer],
+) -> RResult<()> {
   for fixer in fixers {
     for var in fixer.used_vars() {
       if !vars.contains(&var) {
+        return Err(RuleCoreError::UndefinedMetaVar(var.to_string(), "fix"));
+      }
+    }
+    // constraint keys must reference meta-variables bound to an AST node
+    for var in fixer.constraint_vars() {
+      if !node_vars.contains(&var) {
         return Err(RuleCoreError::UndefinedMetaVar(var.to_string(), "fix"));
       }
     }
@@ -213,6 +226,72 @@ constraints: {B: {pattern: bbb}}
     );
     assert_eq!(name, "B");
     assert_eq!(section, "constraints");
+  }
+
+  fn get_undefined_in_fix(src: &str) -> (String, &str) {
+    let globals = crate::GlobalRules::default();
+    let rule: crate::SerializableRuleConfig<TypeScript> = from_str(src).expect("should deser");
+    match crate::RuleConfig::try_from(rule, &globals) {
+      Err(crate::RuleConfigError::Core(RuleCoreError::UndefinedMetaVar(name, section))) => {
+        (name, section)
+      }
+      _ => panic!("unexpected error"),
+    }
+  }
+
+  #[test]
+  fn test_undefined_vars_in_fix_constraints() {
+    let (name, section) = get_undefined_in_fix(
+      r"
+id: test
+language: Tsx
+rule: {pattern: log($A)}
+fix:
+  template: 'abc'
+  constraints:
+    B: {kind: number}
+",
+    );
+    assert_eq!(name, "B");
+    assert_eq!(section, "fix");
+  }
+
+  #[test]
+  fn test_transform_var_in_fix_constraints_is_rejected() {
+    // a transformed variable has no AST node to constrain
+    let (name, section) = get_undefined_in_fix(
+      r"
+id: test
+language: Tsx
+rule: {pattern: log($A)}
+transform:
+  B: {substring: {source: $A, startChar: 1}}
+fix:
+  template: '$B'
+  constraints:
+    B: {kind: number}
+",
+    );
+    assert_eq!(name, "B");
+    assert_eq!(section, "fix");
+  }
+
+  #[test]
+  fn test_defined_vars_in_fix_constraints() {
+    let globals = crate::GlobalRules::default();
+    let rule: crate::SerializableRuleConfig<TypeScript> = from_str(
+      r"
+id: test
+language: Tsx
+rule: {pattern: log($A)}
+fix:
+  template: 'logger($A)'
+  constraints:
+    A: {kind: number}
+",
+    )
+    .expect("should deser");
+    assert!(crate::RuleConfig::try_from(rule, &globals).is_ok());
   }
   #[test]
   fn test_undefined_vars_in_transform() {

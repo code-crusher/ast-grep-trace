@@ -33,6 +33,7 @@ impl RewriteData {
     let fixers: Vec<_> = rule
       .fixer
       .iter()
+      .filter(|fixer| fixer.is_applicable(node_match))
       .filter_map(|fixer| {
         let edit = node_match.make_edit(&rule.matcher, fixer);
         let range = node_match.range();

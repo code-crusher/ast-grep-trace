@@ -118,10 +118,10 @@ fn replace_one<'n, D: Doc>(
         .do_match(child.clone(), &mut env, Some(ctx.enclosing_env))
       {
         let nm = NodeMatch::new(n, env.into_owned());
-        edits.push(nm.make_edit(
-          &rewriter.matcher,
-          rewriter.fixer.first().expect("rewriter must have fix"),
-        ));
+        // rewriter must have fix, but the fix may be skipped by its constraints
+        if let Some(fixer) = rewriter.fixer.iter().find(|f| f.is_applicable(&nm)) {
+          edits.push(nm.make_edit(&rewriter.matcher, fixer));
+        }
         // stop at first fix, skip duplicate fix
         break;
       }

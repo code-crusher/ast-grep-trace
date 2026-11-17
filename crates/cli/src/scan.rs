@@ -282,8 +282,8 @@ impl PathWorker for ScanWithConfig {
       let scanned = combined.scan(&grep, /* separate_fix*/ interactive);
       if interactive {
         let diffs = scanned.diffs;
-        let processed = match_rule_diff_on_file(path, diffs, processor)?;
-        ret.push(processed);
+        let processed = match_rule_diff_on_file(path, diffs, file_content, processor)?;
+        ret.extend(processed);
       }
       for (rule, matches) in scanned.matches {
         // Atomically reserve slots for matches, truncating if needed
@@ -306,7 +306,7 @@ impl PathWorker for ScanWithConfig {
           error_count = error_count.saturating_add(match_count);
         }
         let processed = match_rule_on_file(path, matches, rule, file_content, processor)?;
-        ret.push(processed);
+        ret.extend(processed);
       }
     }
     self.error_count.fetch_add(error_count, Ordering::AcqRel);
@@ -409,7 +409,7 @@ impl StdInWorker for ScanStdin {
         error_count = error_count.saturating_add(match_count);
       }
       let processed = match_rule_on_file(path, matches, rule, file_content, processor)?;
-      ret.push(processed);
+      ret.extend(processed);
     }
     self.error_count.fetch_add(error_count, Ordering::AcqRel);
     Ok(ret)
@@ -418,18 +418,27 @@ impl StdInWorker for ScanStdin {
 fn match_rule_diff_on_file<T>(
   path: &Path,
   matches: Vec<(&RuleConfig<SgLang>, NodeMatch<StrDoc<SgLang>>)>,
+  file_content: &str,
   processor: &impl PrintProcessor<T>,
-) -> Result<T> {
-  let diffs = matches
-    .into_iter()
-    .filter_map(|(rule, m)| {
-      let fixers = &rule.fixer;
-      let diff = Diff::multiple(m, &rule.matcher, fixers)?;
-      Some((diff, rule))
-    })
-    .collect();
-  let processed = processor.print_rule_diffs(diffs, path)?;
-  Ok(processed)
+) -> Result<Vec<T>> {
+  let file = SimpleFile::new(path.to_string_lossy(), file_content);
+  let mut diffs = vec![];
+  let mut blocked = vec![];
+  for (rule, m) in matches {
+    match Diff::multiple(m.clone(), &rule.matcher, &rule.fixer) {
+      Some(diff) => diffs.push((diff, rule)),
+      // rule matched but no fixer applies, report the match without fix
+      None => blocked.push((rule, m)),
+    }
+  }
+  let mut ret = vec![];
+  if !diffs.is_empty() {
+    ret.push(processor.print_rule_diffs(diffs, path)?);
+  }
+  for (rule, m) in blocked {
+    ret.push(processor.print_rule(vec![m], file.clone(), rule)?);
+  }
+  Ok(ret)
 }
 
 fn match_rule_on_file<T>(
@@ -438,18 +447,29 @@ fn match_rule_on_file<T>(
   rule: &RuleConfig<SgLang>,
   file_content: &str,
   processor: &impl PrintProcessor<T>,
-) -> Result<T> {
+) -> Result<Vec<T>> {
   let file = SimpleFile::new(path.to_string_lossy(), file_content);
-  let processed = if let Some(fixer) = &rule.fixer.first() {
-    let diffs = matches
-      .into_iter()
-      .map(|m| (Diff::generate(m, &rule.matcher, fixer), rule))
-      .collect();
-    processor.print_rule_diffs(diffs, path)?
+  let mut ret = vec![];
+  if let Some(fixer) = &rule.fixer.first() {
+    let mut diffs = vec![];
+    let mut blocked = vec![];
+    for m in matches {
+      match Diff::generate(m.clone(), &rule.matcher, fixer) {
+        Some(diff) => diffs.push((diff, rule)),
+        // rule matched but no fixer applies, report the match without fix
+        None => blocked.push(m),
+      }
+    }
+    if !diffs.is_empty() {
+      ret.push(processor.print_rule_diffs(diffs, path)?);
+    }
+    if !blocked.is_empty() {
+      ret.push(processor.print_rule(blocked, file, rule)?);
+    }
   } else {
-    processor.print_rule(matches, file, rule)?
-  };
-  Ok(processed)
+    ret.push(processor.print_rule(matches, file, rule)?);
+  }
+  Ok(ret)
 }
 
 #[cfg(test)]

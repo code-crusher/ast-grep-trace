@@ -572,6 +572,34 @@ test-rule:
   }
 
   #[test]
+  fn test_fix_constraints_only_apply_when_satisfied() {
+    let rule: SerializableRuleConfig<TypeScript> = from_str(
+      r"
+id: test
+language: Tsx
+rule: {pattern: 'log($A)'}
+fix:
+  template: 'logger($A)'
+  constraints:
+    A: {kind: number}
+",
+    )
+    .expect("should parse");
+    let rule = RuleConfig::try_from(rule, &Default::default()).expect("should work");
+    let fixer = rule.fixer.first().expect("should have fixer");
+    // rule matches both sources
+    let grep = TypeScript::Tsx.ast_grep("log(123)");
+    let nm = grep.root().find(&rule.matcher).unwrap();
+    assert!(fixer.is_applicable(&nm));
+    let edit = nm.make_edit(&rule.matcher, fixer);
+    assert_eq!(String::from_utf8_lossy(&edit.inserted_text), "logger(123)");
+    // rule matches, but the fix must not apply
+    let grep = TypeScript::Tsx.ast_grep("log(a)");
+    let nm = grep.root().find(&rule.matcher).unwrap();
+    assert!(!fixer.is_applicable(&nm));
+  }
+
+  #[test]
   fn test_undefined_vars_in_fix() {
     let src = r"
 id: test
