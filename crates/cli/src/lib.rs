@@ -242,6 +242,7 @@ mod test_cli {
     ok("run -p testm -r restm --update-all"); // update all
     ok("run -p test --json compact"); // argument after --json should not be parsed as JsonStyle
     ok("run -p test --json=pretty dir");
+    ok("run -p test --json=ripgrep dir"); // ripgrep style for run
     ok("run -p test --json dir"); // arg after --json should not be parsed as JsonStyle
     ok("run -p test --strictness ast");
     ok("run -p test --strictness relaxed");
@@ -295,6 +296,7 @@ mod test_cli {
     ok("scan --interactive");
     ok("scan --follow");
     ok("scan --json --include-metadata");
+    ok("scan --json=ripgrep"); // ripgrep style for scan
     ok("scan -r test.yml -c test.yml --json dir"); // allow registering custom lang
     ok("scan --globs '*.js'");
     ok("scan --globs '*.{js, ts}'");
@@ -366,6 +368,7 @@ mod test_cli {
     ok("outline crates/cli/src --json");
     ok("outline crates/cli/src --json=compact");
     ok("outline crates/cli/src --json=stream");
+    ok("outline crates/cli/src --json=ripgrep"); // parses, rejected at runtime
     ok("outline crates/cli/src --color never");
     ok("outline crates/cli/src --items exports");
     ok("outline crates/cli/src --items imports");

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Args, ValueEnum};
 
 use crate::config::ProjectConfig;
@@ -132,6 +132,9 @@ pub struct OutlineArg {
 }
 
 pub fn run_outline(mut arg: OutlineArg, project: Result<ProjectConfig>) -> Result<ExitCode> {
+  if arg.json == Some(JsonStyle::Ripgrep) {
+    bail!("ripgrep JSON style is not supported for outline output");
+  }
   if let Ok(config) = &project {
     arg.input.apply_config(config);
   }

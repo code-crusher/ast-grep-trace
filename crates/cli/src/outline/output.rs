@@ -62,6 +62,8 @@ impl<W: Write> OutlineEmitter<W> {
         serde_json::to_writer(&mut self.out, &file)?;
         writeln!(self.out)?;
       }
+      // rejected in run_outline, outline has no ripgrep-style output
+      Some(JsonStyle::Ripgrep) => unreachable!("ripgrep json style is rejected"),
       None => print_text_file_to(&mut self.out, &file, &self.style, self.is_first)?,
     }
     self.is_first = false;
@@ -87,6 +89,7 @@ impl<W: Write> OutlineEmitter<W> {
         }
       }
       Some(JsonStyle::Stream) => {}
+      Some(JsonStyle::Ripgrep) => unreachable!("ripgrep json style is rejected"),
       None if !self.emitted_any => {
         writeln!(self.out, "nothing found")?;
       }
