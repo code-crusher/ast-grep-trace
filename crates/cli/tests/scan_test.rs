@@ -173,6 +173,58 @@ fn test_sg_scan_update_all_reports_unfixable_rules() -> Result<()> {
   Ok(())
 }
 
+/// The fix rewrites code other than the matched node: the rule matches
+/// `async($ARGS)` but its fix targets the import statement, bound to
+/// `$IMPORT` via nested relational rules. See #1985.
+#[test]
+fn test_sg_scan_fix_targeting_different_node() -> Result<()> {
+  const RULE: &str = r#"
+id: no-async
+message: import waitForAsync instead of async
+severity: warning
+language: TypeScript
+rule:
+  all:
+    - pattern: async($ARGS)
+    - inside:
+        stopBy: end
+        has:
+          stopBy: neighbor
+          kind: import_statement
+          pattern: $IMPORT
+fix:
+  template: "import { waitForAsync } from '@angular/core/testing';"
+  source: $IMPORT
+"#;
+  let dir = create_test_files([
+    ("sgconfig.yml", CONFIG),
+    ("rules/no-async.yml", RULE),
+    (
+      "test.ts",
+      "import { async } from '@angular/core';\nasync(123);\n",
+    ),
+  ])?;
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args([
+      "scan",
+      "--update-all",
+      "--color",
+      "never",
+      "--report-style",
+      "short",
+    ])
+    .assert()
+    .success()
+    .stderr(contains("Applied 1 changes"));
+  let updated = std::fs::read_to_string(dir.path().join("test.ts"))?;
+  assert_eq!(
+    updated,
+    "import { waitForAsync } from '@angular/core/testing';\nasync(123);\n"
+  );
+  Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn test_sg_scan_update_all_preserves_permissions() -> Result<()> {

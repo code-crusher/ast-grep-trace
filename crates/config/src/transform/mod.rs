@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 pub use trans::Trans;
+pub(crate) use trans::parse_meta_var;
 
 #[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(untagged)]

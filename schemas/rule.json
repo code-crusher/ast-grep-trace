@@ -698,6 +698,10 @@
         "expandStart": {
           "$ref": "#/$defs/Relation"
         },
+        "source": {
+          "description": "A metavariable that identifies the code to be replaced by the fix.\nBy default, the fix replaces the matched node. When set, the fix\nwill replace the code captured by this metavariable instead,\ne.g. a node bound by a relational rule in `rule`.",
+          "type": "string"
+        },
         "title": {
           "type": [
             "string",
