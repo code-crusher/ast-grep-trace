@@ -713,7 +713,7 @@ impl JSONProcessor {
     // skip overlapping matches, they are nested matches in pre-order
     let mut records: Vec<RgRecord> = vec![];
     let mut last_end = 0;
-    for nm in matches.iter().copied() {
+    for nm in matches {
       let range = nm.range();
       if range.start < last_end {
         continue;
@@ -728,7 +728,10 @@ impl JSONProcessor {
       let text = &source[range.start..end];
       last_end = range.end;
       // matches on the same line coalesce into one record with many submatches
-      if records.last_mut().is_some_and(|rec| start_line <= rec.end_line) {
+      if records
+        .last_mut()
+        .is_some_and(|rec| start_line <= rec.end_line)
+      {
         let rec = records.last_mut().expect("just checked");
         rec.end_line = rec.end_line.max(end_line);
         rec.submatches.push((range.start, end, text));
@@ -1123,11 +1126,7 @@ rule:
   }
 
   /// helper: run ripgrep-style printing of `source` and return the parsed events
-  fn ripgrep_events_of(
-    source: &str,
-    pattern: &str,
-    context: (u16, u16),
-  ) -> Vec<serde_json::Value> {
+  fn ripgrep_events_of(source: &str, pattern: &str, context: (u16, u16)) -> Vec<serde_json::Value> {
     let mut printer = make_test_printer(JsonStyle::Ripgrep).context(context);
     let grep = SgLang::from(SupportLang::Tsx).ast_grep(source);
     let matches = grep.root().find_all(pattern).collect();
@@ -1172,7 +1171,9 @@ rule:
     let events = ripgrep_events_of(source, "bbb", (1, 1));
     assert_eq!(
       event_types(&events),
-      ["begin", "context", "match", "context", "context", "match", "context", "end", "summary"]
+      [
+        "begin", "context", "match", "context", "context", "match", "context", "end", "summary"
+      ]
     );
     assert_eq!(events[1]["data"]["lines"]["text"], "aaa\n");
     assert_eq!(events[1]["data"]["line_number"], 1);
