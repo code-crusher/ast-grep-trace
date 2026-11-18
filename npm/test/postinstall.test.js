@@ -56,6 +56,30 @@ function registerPackageSelectionTests() {
     assert.equal(detectPackageOnPlatform("linux", "arm", "glibc"), null);
     assert.equal(detectPackageOnPlatform("freebsd", "x64", null), null);
   });
+
+  // Every published platform package must be an optionalDependency at the
+  // wrapper version. Otherwise Renovate cannot look the package up, and the
+  // wrapper postinstall cannot resolve its binary.
+  test("published platform packages match optionalDependencies", () => {
+    assert.deepEqual(Object.keys(cli.optionalDependencies).sort(), [
+      "@ast-grep/cli-darwin-arm64",
+      "@ast-grep/cli-darwin-x64",
+      "@ast-grep/cli-linux-arm64-gnu",
+      "@ast-grep/cli-linux-arm64-musl",
+      "@ast-grep/cli-linux-x64-gnu",
+      "@ast-grep/cli-linux-x64-musl",
+      "@ast-grep/cli-win32-arm64-msvc",
+      "@ast-grep/cli-win32-ia32-msvc",
+      "@ast-grep/cli-win32-x64-msvc",
+    ]);
+    for (const suffix of ["linux-arm64-musl", "linux-x64-musl"]) {
+      const name = `@ast-grep/cli-${suffix}`;
+      assert.equal(cli.optionalDependencies[name], cli.version);
+      const native = require(`../platforms/${suffix}/package.json`);
+      assert.equal(native.name, name);
+      assert.equal(native.version, cli.version);
+    }
+  });
 }
 
 registerPackageSelectionTests();
