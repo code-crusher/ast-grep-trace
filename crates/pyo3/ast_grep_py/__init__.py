@@ -36,6 +36,8 @@ class RuleWithoutNot(TypedDict, total=False):
     has: Relation
     precedes: Relation
     follows: Relation
+    controls: Relation
+    controlledBy: Relation
 
     # composite rule
     all: List[Rule]

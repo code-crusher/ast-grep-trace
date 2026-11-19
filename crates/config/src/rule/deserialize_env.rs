@@ -162,8 +162,8 @@ fn visit_dependent_rule_ids_with_params<'a, T: DependentRule>(
   params: Option<&[String]>,
 ) -> OrderResult<()> {
   // Only traverse composite rules (matches/all/any/not). Relational sub-rules
-  // (has/inside/precedes/follows) are intentionally skipped because they will
-  // not introduce recursion.
+  // (has/inside/precedes/follows/controls/controlledBy) are intentionally
+  // skipped because they will not introduce recursion.
   if let Maybe::Present(matches) = &rule.matches {
     match matches {
       SerializableMatches::Id(id) => {

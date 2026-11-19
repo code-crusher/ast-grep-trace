@@ -288,6 +288,14 @@
           "description": "`follows` accepts a relational rule object.\nthe target node must appear after another node matching the `follows` sub-rule.",
           "$ref": "#/$defs/Relation"
         },
+        "controls": {
+          "description": "`controls` accepts a relational rule object.\nthe target node must be the condition of an enclosing control-flow\nconstruct (if/while/match/ternary/...), and the `controls` sub-rule\nmatches a node in the construct's controlled branch.",
+          "$ref": "#/$defs/Relation"
+        },
+        "controlledBy": {
+          "description": "`controlledBy` accepts a relational rule object.\nthe target node must appear in the controlled branch of an enclosing\ncontrol-flow construct, and the `controlledBy` sub-rule matches the\nconstruct's condition.",
+          "$ref": "#/$defs/Relation"
+        },
         "all": {
           "description": "A list of sub rules and matches a node if all of sub rules match.\nThe meta variables of the matched node contain all variables from the sub-rules.",
           "type": "array",
@@ -628,6 +636,14 @@
         },
         "follows": {
           "description": "`follows` accepts a relational rule object.\nthe target node must appear after another node matching the `follows` sub-rule.",
+          "$ref": "#/$defs/Relation"
+        },
+        "controls": {
+          "description": "`controls` accepts a relational rule object.\nthe target node must be the condition of an enclosing control-flow\nconstruct (if/while/match/ternary/...), and the `controls` sub-rule\nmatches a node in the construct's controlled branch.",
+          "$ref": "#/$defs/Relation"
+        },
+        "controlledBy": {
+          "description": "`controlledBy` accepts a relational rule object.\nthe target node must appear in the controlled branch of an enclosing\ncontrol-flow construct, and the `controlledBy` sub-rule matches the\nconstruct's condition.",
           "$ref": "#/$defs/Relation"
         },
         "all": {

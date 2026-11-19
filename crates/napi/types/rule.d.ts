@@ -89,6 +89,16 @@ export interface Rule<M extends TypesMap = TypesMap> {
    * `follows` accepts a relational rule object.
    * the target node must appear after another node matching the `follows` sub-rule. */
   follows?: Relation<M>
+  /**
+   * `controls` accepts a relational rule object.
+   * the target node must be the condition of an enclosing control-flow construct,
+   * and the `controls` sub-rule matches a node in the construct's controlled branch. */
+  controls?: Relation<M>
+  /**
+   * `controlledBy` accepts a relational rule object.
+   * the target node must appear in the controlled branch of an enclosing control-flow
+   * construct, and the `controlledBy` sub-rule matches the construct's condition. */
+  controlledBy?: Relation<M>
   // composite
   /**
    * A list of sub rules and matches a node if all of sub rules match.

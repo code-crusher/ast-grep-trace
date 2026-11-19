@@ -18,7 +18,7 @@ use crate::maybe::Maybe;
 use nth_child::{NthChild, NthChildError, SerializableNthChild};
 use range::{RangeMatcher, RangeMatcherError, SerializableRange};
 use referent_rule::{ReferentRule, ReferentRuleError};
-use relational_rule::{Follows, Has, Inside, Precedes};
+use relational_rule::{ControlledBy, Controls, Follows, Has, Inside, Precedes};
 
 use ast_grep_core::language::Language;
 use ast_grep_core::matcher::{KindMatcher, RegexMatcher, RegexMatcherError};
@@ -83,6 +83,22 @@ pub struct SerializableRule {
   /// the target node must appear after another node matching the `follows` sub-rule.
   #[serde(default, skip_serializing_if = "Maybe::is_absent")]
   pub follows: Maybe<Box<Relation>>,
+  /// `controls` accepts a relational rule object.
+  /// the target node must be the condition of an enclosing control-flow
+  /// construct (if/while/match/ternary/...), and the `controls` sub-rule
+  /// matches a node in the construct's controlled branch.
+  #[serde(default, skip_serializing_if = "Maybe::is_absent")]
+  pub controls: Maybe<Box<Relation>>,
+  /// `controlledBy` accepts a relational rule object.
+  /// the target node must appear in the controlled branch of an enclosing
+  /// control-flow construct, and the `controlledBy` sub-rule matches the
+  /// construct's condition.
+  #[serde(
+    default,
+    skip_serializing_if = "Maybe::is_absent",
+    rename = "controlledBy"
+  )]
+  pub controlled_by: Maybe<Box<Relation>>,
   // composite
   /// A list of sub rules and matches a node if all of sub rules match.
   /// The meta variables of the matched node contain all variables from the sub-rules.
@@ -129,6 +145,8 @@ impl SerializableRule {
         has: self.has.into(),
         precedes: self.precedes.into(),
         follows: self.follows.into(),
+        controls: self.controls.into(),
+        controlled_by: self.controlled_by.into(),
       },
       composite: CompositeRule {
         all: self.all.into(),
@@ -215,6 +233,8 @@ pub struct RelationalRule {
   pub has: Option<Box<Relation>>,
   pub precedes: Option<Box<Relation>>,
   pub follows: Option<Box<Relation>>,
+  pub controls: Option<Box<Relation>>,
+  pub controlled_by: Option<Box<Relation>>,
 }
 
 pub struct CompositeRule {
@@ -236,6 +256,8 @@ pub enum Rule {
   Has(Box<Has>),
   Precedes(Box<Precedes>),
   Follows(Box<Follows>),
+  Controls(Box<Controls>),
+  ControlledBy(Box<ControlledBy>),
   // composite
   All(o::All<Rule>),
   Any(o::Any<Rule>),
@@ -266,6 +288,8 @@ impl Rule {
       Rule::Inside(p) => p.defined_vars(),
       Rule::Precedes(f) => f.defined_vars(),
       Rule::Follows(f) => f.defined_vars(),
+      Rule::Controls(c) => c.defined_vars(),
+      Rule::ControlledBy(c) => c.defined_vars(),
       Rule::All(sub) => sub.inner().iter().flat_map(|r| r.defined_vars()).collect(),
       Rule::Any(sub) => sub.inner().iter().flat_map(|r| r.defined_vars()).collect(),
       Rule::Not(sub) => sub.inner().defined_vars(),
@@ -285,6 +309,8 @@ impl Rule {
       Rule::Inside(p) => p.verify_util(),
       Rule::Precedes(f) => f.verify_util(),
       Rule::Follows(f) => f.verify_util(),
+      Rule::Controls(c) => c.verify_util(),
+      Rule::ControlledBy(c) => c.verify_util(),
       Rule::All(sub) => sub.inner().iter().try_for_each(|r| r.verify_util()),
       Rule::Any(sub) => sub.inner().iter().try_for_each(|r| r.verify_util()),
       Rule::Not(sub) => sub.inner().verify_util(),
@@ -312,6 +338,8 @@ impl Matcher for Rule {
       Has(child) => match_and_add_label(&**child, node, env),
       Precedes(latter) => match_and_add_label(&**latter, node, env),
       Follows(former) => match_and_add_label(&**former, node, env),
+      Controls(construct) => match_and_add_label(&**construct, node, env),
+      ControlledBy(construct) => match_and_add_label(&**construct, node, env),
       // composite
       All(all) => all.match_node_with_env(node, env),
       Any(any) => any.match_node_with_env(node, env),
@@ -334,6 +362,8 @@ impl Matcher for Rule {
       Has(child) => child.potential_kinds(),
       Precedes(latter) => latter.potential_kinds(),
       Follows(former) => former.potential_kinds(),
+      Controls(construct) => construct.potential_kinds(),
+      ControlledBy(construct) => construct.potential_kinds(),
       // composite
       All(all) => all.potential_kinds(),
       Any(any) => any.potential_kinds(),
@@ -473,6 +503,15 @@ fn deserialize_relational_rule<L: Language>(
   }
   if let Some(follows) = relational.follows {
     rules.push(R::Follows(Box::new(Follows::try_new(*follows, env)?)));
+  }
+  if let Some(controls) = relational.controls {
+    rules.push(R::Controls(Box::new(Controls::try_new(*controls, env)?)));
+  }
+  if let Some(controlled_by) = relational.controlled_by {
+    rules.push(R::ControlledBy(Box::new(ControlledBy::try_new(
+      *controlled_by,
+      env,
+    )?)));
   }
   Ok(())
 }

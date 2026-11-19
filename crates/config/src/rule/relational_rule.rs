@@ -251,6 +251,49 @@ impl Matcher for Precedes {
   }
 }
 
+/// Tree-sitter control-flow constructs across grammars expose the tested
+/// expression in a `condition` field, and the code it guards in
+/// `consequence`/`alternative`/`body` fields. Match/select statements name the
+/// tested expression `value` or `subject` instead, but it plays the same role.
+const CONDITION_FIELDS: &[&str] = &["condition", "value", "subject"];
+const CONTROLLED_FIELDS: &[&str] = &["consequence", "alternative", "body"];
+
+/// Returns whether `ctrl` is a control-flow construct: it must test some
+/// expression and guard some code, e.g. if/while/for/match/ternary. Nodes
+/// like Rust's `let_condition` test an expression but guard nothing.
+fn is_construct<D: Doc>(ctrl: &Node<'_, D>) -> bool {
+  CONDITION_FIELDS.iter().any(|f| ctrl.field(f).is_some())
+    && CONTROLLED_FIELDS.iter().any(|f| ctrl.field(f).is_some())
+}
+
+/// Returns whether `node` is the tested expression (or a sub-expression of it)
+/// of the control-flow construct `ctrl`, e.g. the `a` in `if (a.b()) {}`.
+fn is_condition_of<D: Doc>(ctrl: &Node<'_, D>, node: &Node<'_, D>) -> bool {
+  is_construct(ctrl) && {
+    let range = node.range();
+    CONDITION_FIELDS.iter().any(|f| {
+      ctrl.field(f).is_some_and(|c| {
+        let r = c.range();
+        r.start <= range.start && range.end <= r.end
+      })
+    })
+  }
+}
+
+/// Returns whether `node` lies in a region guarded by `ctrl`'s condition,
+/// e.g. the `foo()` in `if (cond) { foo() }`.
+fn is_controlled<D: Doc>(ctrl: &Node<'_, D>, node: &Node<'_, D>) -> bool {
+  is_construct(ctrl) && {
+    let range = node.range();
+    CONTROLLED_FIELDS.iter().any(|f| {
+      ctrl.field(f).is_some_and(|region| {
+        let r = region.range();
+        r.start <= range.start && range.end <= r.end
+      })
+    })
+  }
+}
+
 pub struct Follows {
   former: Rule,
   stop_by: StopBy,
@@ -304,6 +347,125 @@ impl Matcher for Follows {
     let prev_all = || node.prev_all();
     let finder = |n| self.former.match_node_with_env(n, env);
     self.stop_by.find(prev, prev_all, finder)
+  }
+}
+
+/// `controls` requires the target node to be the condition of an enclosing
+/// control-flow construct (if/while/for/match/ternary/...), and the sub-rule
+/// to match a node in the construct's controlled region(s).
+///
+/// It is the inverse of [`ControlledBy`].
+pub struct Controls {
+  controlled: Rule,
+  stop_by: StopBy,
+}
+impl Controls {
+  pub fn try_new<L: Language>(
+    relation: Relation,
+    env: &DeserializeEnv<L>,
+  ) -> Result<Self, RuleSerializeError> {
+    if relation.field.is_some() {
+      return Err(RuleSerializeError::FieldNotSupported);
+    }
+    Ok(Self {
+      stop_by: StopBy::try_from(relation.stop_by, env)?,
+      controlled: env.deserialize_rule(relation.rule)?,
+    })
+  }
+
+  pub fn defined_vars(&self) -> HashSet<&str> {
+    self
+      .controlled
+      .defined_vars()
+      .union(&self.stop_by.defined_vars())
+      .copied()
+      .collect()
+  }
+
+  pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
+    self.controlled.verify_util()?;
+    self.stop_by.verify_util()
+  }
+}
+impl Matcher for Controls {
+  fn match_node_with_env<'tree, D: Doc>(
+    &self,
+    node: Node<'tree, D>,
+    env: &mut Cow<MetaVarEnv<'tree, D>>,
+  ) -> Option<Node<'tree, D>> {
+    // walk up to enclosing control-flow constructs that test `node`
+    let nearest = || node.ancestors().find(|n| is_condition_of(n, &node));
+    let all = || node.ancestors().filter(|n| is_condition_of(n, &node));
+    self.stop_by.find(nearest, all, |ctrl| {
+      // search the construct's controlled regions for the sub-rule match
+      CONTROLLED_FIELDS
+        .iter()
+        .filter_map(|f| ctrl.field(f))
+        .find_map(|region| {
+          region
+            .dfs()
+            .find_map(|n| self.controlled.match_node_with_env(n, env))
+        })
+    })
+  }
+}
+
+/// `controlledBy` requires the target node to appear in the controlled region
+/// of an enclosing control-flow construct, and the sub-rule to match the
+/// construct's condition.
+///
+/// It is the inverse of [`Controls`].
+pub struct ControlledBy {
+  controller: Rule,
+  stop_by: StopBy,
+}
+impl ControlledBy {
+  pub fn try_new<L: Language>(
+    relation: Relation,
+    env: &DeserializeEnv<L>,
+  ) -> Result<Self, RuleSerializeError> {
+    if relation.field.is_some() {
+      return Err(RuleSerializeError::FieldNotSupported);
+    }
+    Ok(Self {
+      stop_by: StopBy::try_from(relation.stop_by, env)?,
+      controller: env.deserialize_rule(relation.rule)?,
+    })
+  }
+
+  pub fn defined_vars(&self) -> HashSet<&str> {
+    self
+      .controller
+      .defined_vars()
+      .union(&self.stop_by.defined_vars())
+      .copied()
+      .collect()
+  }
+
+  pub fn verify_util(&self) -> Result<(), RuleSerializeError> {
+    self.controller.verify_util()?;
+    self.stop_by.verify_util()
+  }
+}
+impl Matcher for ControlledBy {
+  fn match_node_with_env<'tree, D: Doc>(
+    &self,
+    node: Node<'tree, D>,
+    env: &mut Cow<MetaVarEnv<'tree, D>>,
+  ) -> Option<Node<'tree, D>> {
+    // walk up to enclosing control-flow constructs that control `node`
+    let nearest = || node.ancestors().find(|n| is_controlled(n, &node));
+    let all = || node.ancestors().filter(|n| is_controlled(n, &node));
+    self.stop_by.find(nearest, all, |ctrl| {
+      // match the sub-rule against the construct's condition
+      CONDITION_FIELDS
+        .iter()
+        .filter_map(|f| ctrl.field(f))
+        .find_map(|c| {
+          c.dfs()
+            .find_map(|n| self.controller.match_node_with_env(n, env))
+        })
+    })
   }
 }
 
@@ -771,5 +933,174 @@ mod test {
       field: TS::Tsx.field_to_id("condition"),
     };
     assert_eq!(has.defined_vars(), ["A"].into_iter().collect());
+    let controls = Controls {
+      controlled: Rule::Pattern(Pattern::new("var a = $A", TS::Tsx)),
+      stop_by: StopBy::Rule(Rule::Pattern(Pattern::new("var b = $B", TS::Tsx))),
+    };
+    assert_eq!(controls.defined_vars(), ["A", "B"].into_iter().collect());
+    let controlled_by = ControlledBy {
+      controller: Rule::Pattern(Pattern::new("var a = $A", TS::Tsx)),
+      stop_by: StopBy::Rule(Rule::Pattern(Pattern::new("var b = $B", TS::Tsx))),
+    };
+    assert_eq!(
+      controlled_by.defined_vars(),
+      ["A", "B"].into_iter().collect()
+    );
+  }
+
+  fn make_controls_rule(target: &str, controlled: &str, stop_by: StopBy) -> impl Matcher {
+    let controls = Controls {
+      controlled: Rule::Pattern(Pattern::new(controlled, TS::Tsx)),
+      stop_by,
+    };
+    o::All::new(vec![
+      Rule::Pattern(Pattern::new(target, TS::Tsx)),
+      Rule::Controls(Box::new(controls)),
+    ])
+  }
+
+  #[test]
+  fn test_controls_operator() {
+    // https://github.com/ast-grep/ast-grep/issues/334
+    let rule = make_controls_rule("isSome()", "alert(123)", StopBy::End);
+    test_found(
+      &[
+        "if (isSome()) { alert(123); }",
+        "if (isSome()) { alert(123) } else { alert(456); }",
+        // controlled node in the else branch
+        "if (isSome()) { foo(); } else { alert(123); }",
+        // the condition node in TSX is wrapped by parenthesized_expression
+        "if ((isSome())) { alert(123); }",
+        "while (isSome()) { alert(123); }",
+        // condition in a loop of a for statement
+        "for (; isSome();) { alert(123); }",
+        "const a = isSome() ? alert(123) : null",
+        // sub-expression of the condition still counts as the tested node
+        "if (isSome() && bar) { alert(123); }",
+      ],
+      &rule,
+    );
+    test_not_found(
+      &[
+        // not a condition of anything
+        "isSome(); { alert(123); }",
+        // sub-rule not in controlled regions
+        "if (isSome()) { foo(); }",
+        "if (isSome()) {} else { foo(); }",
+        // sibling, not controlled
+        "if (foo()) { bar(); } isSome(); alert(123);",
+        // controlled by a different condition
+        "if (foo()) { alert(123); } isSome();",
+        // condition text differs
+        "if (isNone()) { alert(123); }",
+        // deeper inside the condition, but alert is outside the construct
+        "if (isSome() && bar) { foo(); } alert(123);",
+      ],
+      &rule,
+    );
+  }
+
+  #[test]
+  fn test_controls_member_condition() {
+    // the issue's `option.is_some()` shape: condition is a member expression
+    let rule = make_controls_rule("$O.isSome()", "alert(123)", StopBy::End);
+    test_found(
+      &[
+        "if (option.isSome()) { alert(123); }",
+        "if (option.isSome()) { foo(); } else { alert(123); }",
+      ],
+      &rule,
+    );
+    test_not_found(
+      &[
+        "if (option.isNone()) { alert(123); }",
+        "if (option.isSome()) { foo(); }",
+      ],
+      &rule,
+    );
+  }
+
+  #[test]
+  fn test_controls_immediate() {
+    // with stopBy: neighbor, only the closest enclosing construct is checked
+    let rule = make_controls_rule("isSome()", "alert(123)", StopBy::Neighbor);
+    test_found(
+      &[
+        "if (isSome()) { alert(123); }",
+        "while (isSome()) { alert(123); }",
+        // the nearest construct testing `isSome() && bar` is still the if
+        "if (isSome() && bar) { alert(123); }",
+      ],
+      &rule,
+    );
+    test_not_found(
+      &[
+        // the nearest enclosing construct is the ternary in the condition,
+        // whose branches do not contain the sub-rule match; only stopBy: end
+        // reaches the outer if
+        "if (isSome() ? a : b) { alert(123); }",
+      ],
+      &rule,
+    );
+  }
+
+  #[test]
+  fn test_controls_nested_constructs() {
+    // stopBy: end walks all enclosing constructs, not just the nearest
+    let rule = make_controls_rule("isSome()", "alert(123)", StopBy::End);
+    test_found(&["if (isSome() ? a : b) { alert(123); }"], &rule);
+  }
+
+  fn make_controlled_by_rule(target: &str, controller: &str, stop_by: StopBy) -> impl Matcher {
+    let controlled_by = ControlledBy {
+      controller: Rule::Pattern(Pattern::new(controller, TS::Tsx)),
+      stop_by,
+    };
+    o::All::new(vec![
+      Rule::Pattern(Pattern::new(target, TS::Tsx)),
+      Rule::ControlledBy(Box::new(controlled_by)),
+    ])
+  }
+
+  #[test]
+  fn test_controlled_by_operator() {
+    let rule = make_controlled_by_rule("alert(123)", "isSome()", StopBy::End);
+    test_found(
+      &[
+        "if (isSome()) { alert(123); }",
+        "if (isSome()) { foo(); alert(123); }",
+        "if (isSome()) { foo(); } else { alert(123); }",
+        "while (isSome()) { alert(123); }",
+        "for (; isSome();) { alert(123); }",
+        "const a = isSome() ? alert(123) : null",
+        // nested control flow inside the controlled branch
+        "if (isSome()) { if (bar()) { alert(123); } }",
+      ],
+      &rule,
+    );
+    test_not_found(
+      &[
+        // not inside any controlled region
+        "alert(123); if (isSome()) {}",
+        "if (isSome()) {} alert(123);",
+        // a different condition controls the region
+        "if (foo()) { alert(123); }",
+        "if (isSome()) { foo(); } else { alert(456); }",
+      ],
+      &rule,
+    );
+  }
+
+  #[test]
+  fn test_controlled_by_immediate() {
+    let rule = make_controlled_by_rule("alert(123)", "isSome()", StopBy::Neighbor);
+    test_found(&["if (isSome()) { alert(123); }"], &rule);
+    test_not_found(
+      &[
+        // the if is not the immediate parent of the controlled node
+        "if (isSome()) { if (bar()) { alert(123); } }",
+      ],
+      &rule,
+    );
   }
 }

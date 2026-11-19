@@ -330,6 +330,37 @@ constraints:
     test_rule_unmatch(yaml, "function tt() { console.log(2) }");
   }
 
+  // https://github.com/ast-grep/ast-grep/issues/334
+  #[test]
+  fn test_deserialize_controls() {
+    let yaml = &make_yaml(
+      "
+  pattern: $A.isSome()
+  controls:
+    pattern: print($$$)
+",
+    );
+    test_rule_match(yaml, "if (a.isSome()) { print(123); }");
+    test_rule_match(yaml, "if (a.isSome()) { foo(); } else { print(123); }");
+    test_rule_unmatch(yaml, "if (a.isSome()) { foo(); }");
+    test_rule_unmatch(yaml, "if (a.isNone()) { print(123); }");
+  }
+
+  // https://github.com/ast-grep/ast-grep/issues/334
+  #[test]
+  fn test_deserialize_controlled_by() {
+    let yaml = &make_yaml(
+      "
+  pattern: print($$$)
+  controlledBy:
+    pattern: $A.isSome()
+",
+    );
+    test_rule_match(yaml, "if (a.isSome()) { print(123); }");
+    test_rule_unmatch(yaml, "if (a.isSome()) { foo(); }");
+    test_rule_unmatch(yaml, "print(123); if (a.isSome()) { foo(); }");
+  }
+
   // https://github.com/ast-grep/ast-grep/issues/813
   #[test]
   fn test_util_rule_with_vaargs() {
