@@ -615,6 +615,45 @@ fn test_transform_indent() -> Result<()> {
   Ok(())
 }
 
+const REPLACE_FIRST_RULE: &str = r"
+id: replace-first
+language: JavaScript
+rule:
+  pattern: let x = $OBJ
+transform:
+  NEW:
+    replace:
+      source: $OBJ
+      replace: \d+
+      by: '9'
+      replaceFirst: true
+fix: let x = $NEW
+";
+
+#[test]
+fn test_replace_first_in_transform() -> Result<()> {
+  let dir = create_test_files([
+    ("sgconfig.yml", CONFIG),
+    ("rules/rule.yml", REPLACE_FIRST_RULE),
+    ("test.js", "let x = { a: 1, b: 2, c: 3 }\n"),
+  ])?;
+  Command::new(cargo_bin!())
+    .current_dir(dir.path())
+    .args([
+      "scan",
+      "--update-all",
+      "--rule",
+      "rules/rule.yml",
+      "test.js",
+    ])
+    .assert()
+    .success();
+  let updated = std::fs::read_to_string(dir.path().join("test.js"))?;
+  // only the first number is replaced by the transform
+  assert_eq!(updated, "let x = { a: 9, b: 2, c: 3 }\n");
+  Ok(())
+}
+
 const LABEL_RULE: &str = r"
 id: label-test
 language: TypeScript

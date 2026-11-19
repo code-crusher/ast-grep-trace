@@ -795,6 +795,10 @@
         "by": {
           "description": "the replacement string",
           "type": "string"
+        },
+        "replaceFirst": {
+          "description": "only replace the first occurrence of the regex, defaults to false.",
+          "type": "boolean"
         }
       },
       "required": [

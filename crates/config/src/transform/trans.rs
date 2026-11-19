@@ -73,11 +73,18 @@ pub struct Replace<T> {
   pub replace: Regex,
   /// the replacement string
   pub by: String,
+  /// only replace the first occurrence of the regex, defaults to false.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub replace_first: bool,
 }
 impl Replace<MetaVariable> {
   fn compute<D: Doc>(&self, ctx: &mut Ctx<'_, '_, D>) -> Option<String> {
     let text = get_text_from_env(&self.source, ctx)?;
-    Some(self.replace.replace_all(&text, &self.by).into_owned())
+    if self.replace_first {
+      Some(self.replace.replace(&text, &self.by).into_owned())
+    } else {
+      Some(self.replace.replace_all(&text, &self.by).into_owned())
+    }
   }
 }
 
@@ -143,6 +150,7 @@ impl Trans<String> {
         source: parse_meta_var(&r.source, lang)?,
         replace: r.replace.clone(),
         by: r.by.clone(),
+        replace_first: r.replace_first,
       }),
       T::Substring(s) => T::Substring(Substring {
         source: parse_meta_var(&s.source, lang)?,
@@ -293,6 +301,48 @@ mod test {
     )?;
     let actual = get_transformed("let a = 123", "let a= $A", &trans).ok_or(())?;
     assert_eq!(actual, "bbb");
+    Ok(())
+  }
+
+  #[test]
+  fn test_replace_first_only() -> R {
+    let trans = parse(
+      r#"
+      replace:
+        source: "$A"
+        replace: \d
+        by: "b"
+        replaceFirst: true
+    "#,
+    )?;
+    let actual = get_transformed("let a = 123", "let a= $A", &trans).ok_or(())?;
+    assert_eq!(actual, "b23");
+    Ok(())
+  }
+
+  #[test]
+  fn test_replace_first_false() -> R {
+    let trans = parse(
+      r#"
+      replace:
+        source: "$A"
+        replace: \d
+        by: "b"
+        replaceFirst: false
+    "#,
+    )?;
+    let actual = get_transformed("let a = 123", "let a= $A", &trans).ok_or(())?;
+    assert_eq!(actual, "bbb");
+    Ok(())
+  }
+
+  #[test]
+  fn test_replace_first_string_form() -> R {
+    use std::str::FromStr;
+    let trans =
+      Trans::from_str(r"replace($A, replace= ^\d, by='b', replaceFirst=true)").map_err(|_| ())?;
+    let actual = get_transformed("let a = 123", "let a= $A", &trans).ok_or(())?;
+    assert_eq!(actual, "b23");
     Ok(())
   }
 

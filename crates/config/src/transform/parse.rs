@@ -109,20 +109,27 @@ fn to_replace(decomposed: DecomposedTransString) -> Result<Replace<String>, Pars
   debug_assert_eq!(decomposed.func, "replace");
   let mut replace = None;
   let mut by = None;
+  let mut replace_first = None;
   for (key, value) in decomposed.args {
     match key {
       "replace" => replace = Some(value),
       "by" => by = Some(value),
+      "replaceFirst" => replace_first = Some(value),
       _ => return Err(ParseTransError::InvalidArg(key.to_string())),
     }
   }
   let replace = replace.ok_or(ParseTransError::RequiredArg("replace"))?;
   let by = by.ok_or(ParseTransError::RequiredArg("by"))?;
   let replace: String = yaml_from_str(replace)?;
+  let replace_first = replace_first
+    .map(yaml_from_str)
+    .transpose()?
+    .unwrap_or(false);
   Ok(Replace {
     source: decomposed.source.to_string(),
     replace: Regex::new(&replace)?,
     by: yaml_from_str(by)?,
+    replace_first,
   })
 }
 fn to_substring(decomposed: DecomposedTransString) -> Result<Substring<String>, ParseTransError> {
@@ -234,6 +241,20 @@ mod test {
     assert_eq!(replace.source, "$A");
     assert_eq!(replace.replace.as_str(), "^.+");
     assert_eq!(replace.by, ", ");
+    assert!(!replace.replace_first);
+  }
+
+  #[test]
+  fn test_parse_replace_first() {
+    let case = "replace($A, replace= ^\\d, by='b', replaceFirst=true)";
+    let replace = Trans::from_str(case).expect("should parse replace");
+    let Trans::Replace(replace) = replace else {
+      panic!("Expected Replace transformation");
+    };
+    assert_eq!(replace.source, "$A");
+    assert_eq!(replace.replace.as_str(), "^\\d");
+    assert_eq!(replace.by, "b");
+    assert!(replace.replace_first);
   }
 
   #[test]
