@@ -14,9 +14,9 @@
 </p>
 
 
-## ast-grep(sg)
+## ast-grep
 
-ast-grep(sg) is a CLI tool for code structural search, lint, and rewriting.
+ast-grep is a CLI tool for code structural search, lint, and rewriting.
 
 ## Introduction
 ast-grep is an [abstract syntax tree](https://dev.to/balapriya/abstract-syntax-tree-ast-explained-in-plain-english-1h38) based tool to search code by pattern code. Think of it as your old-friend [`grep`](https://en.wikipedia.org/wiki/Grep#:~:text=grep%20is%20a%20command%2Dline,which%20has%20the%20same%20effect.), but matching AST nodes instead of text.

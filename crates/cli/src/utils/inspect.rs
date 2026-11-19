@@ -114,7 +114,7 @@ impl<T, W: Write + Sync> TraceInfo<T, W> {
       return Ok(());
     }
     let mut w = self.output.lock().expect("lock should not be poisoned");
-    write!(w, "sg: {level:?}")?;
+    write!(w, "ast-grep: {level:?}")?;
     f(&mut *w)?;
     writeln!(&mut *w)?;
     Ok(())
@@ -283,7 +283,7 @@ mod test {
     assert!(run_trace.print().is_ok());
     assert_eq!(
       ret,
-      "sg: summary|file: scannedFileCount=0,skippedFileCount=0\n"
+      "ast-grep: summary|file: scannedFileCount=0,skippedFileCount=0\n"
     );
 
     let mut ret = String::new();
@@ -315,8 +315,8 @@ mod test {
     assert!(scan_trace.print().is_ok());
     assert_eq!(
       ret,
-      r"sg: summary|file: scannedFileCount=0,skippedFileCount=0
-sg: summary|rule: effectiveRuleCount=10,skippedRuleCount=2
+      r"ast-grep: summary|file: scannedFileCount=0,skippedFileCount=0
+ast-grep: summary|rule: effectiveRuleCount=10,skippedRuleCount=2
 "
     );
   }

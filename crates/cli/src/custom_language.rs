@@ -220,21 +220,21 @@ mod test {
 
   #[test]
   fn test_parse_policy() {
-    assert_eq!(parse(&["sg", "scan"]), None);
+    assert_eq!(parse(&["ast-grep", "scan"]), None);
     assert_eq!(
-      parse(&["sg", "scan", "--custom-languages=allow"]),
+      parse(&["ast-grep", "scan", "--custom-languages=allow"]),
       Some(CustomLanguagePolicy::Allow),
     );
     assert_eq!(
-      parse(&["sg", "run", "--", "--custom-languages", "allow"]),
+      parse(&["ast-grep", "run", "--", "--custom-languages", "allow"]),
       None,
     );
     assert_eq!(
-      parse(&["sg", "scan", "--custom-languages", "trust"]),
+      parse(&["ast-grep", "scan", "--custom-languages", "trust"]),
       Some(CustomLanguagePolicy::Trust),
     );
     assert_eq!(
-      parse(&["sg", "scan", "--custom-languages=revoke"]),
+      parse(&["ast-grep", "scan", "--custom-languages=revoke"]),
       Some(CustomLanguagePolicy::Revoke),
     );
   }

@@ -213,7 +213,7 @@ fn file_too_large(file_content: &str) -> bool {
 }
 
 /// A single atomic unit where matches happen.
-/// It contains the file path, sg instance and matcher.
+/// It contains the file path, ast-grep instance and matcher.
 /// An analogy to compilation unit in C programming language.
 pub struct MatchUnit<M: Matcher> {
   pub path: PathBuf,

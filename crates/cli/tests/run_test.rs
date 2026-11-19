@@ -224,9 +224,13 @@ fn test_inspect_skipped_file() -> Result<()> {
     .args(["-p", "alert($A)", "-l", "js", "--inspect", "entity"])
     .assert()
     .success()
-    .stderr(contains("sg: entity|file|gbk.js: skipped=invalidUtf8"))
-    .stderr(contains("sg: entity|file|empty.js: skipped=emptyFile"))
-    .stderr(contains("sg: entity|file|gbk.js: language").not())
+    .stderr(contains(
+      "ast-grep: entity|file|gbk.js: skipped=invalidUtf8",
+    ))
+    .stderr(contains(
+      "ast-grep: entity|file|empty.js: skipped=emptyFile",
+    ))
+    .stderr(contains("ast-grep: entity|file|gbk.js: language").not())
     .stderr(contains("scannedFileCount=3,skippedFileCount=2"));
   Ok(())
 }

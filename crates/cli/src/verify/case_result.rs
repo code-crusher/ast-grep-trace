@@ -13,7 +13,7 @@ use ast_grep_language::LanguageExt;
 /// reports error for either valid or invalid code.
 ///
 /// TestCase has two forms of input: valid code and invalid code.
-/// sg can either reports or not reports an error.
+/// ast-grep can either reports or not reports an error.
 /// This is a 2*2 = 4 scenarios. Also for reported scenario, we may have snapshot mismatching.
 #[derive(PartialEq, Eq, Debug)]
 pub enum CaseStatus<'a> {

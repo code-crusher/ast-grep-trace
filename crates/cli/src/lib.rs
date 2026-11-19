@@ -37,11 +37,6 @@ Search and Rewrite code at large scale using AST pattern.
 "#;
 #[derive(Parser)]
 #[clap(author, version, about, long_about = LOGO)]
-/**
- * TODO: add some description for ast-grep: sg
- * Example:
- * sg -p "$PATTERN.to($MATCH)" -l ts --rewrite "use($MATCH)"
- */
 struct App {
   #[clap(subcommand)]
   command: Commands,
@@ -169,7 +164,7 @@ mod test_cli {
 
   fn sg(args: &str) -> Result<App> {
     let app = App::try_parse_from(
-      std::iter::once("sg".into()).chain(args.split(' ').map(|s| s.to_string())),
+      std::iter::once("ast-grep".into()).chain(args.split(' ').map(|s| s.to_string())),
     )?;
     Ok(app)
   }
@@ -205,7 +200,7 @@ mod test_cli {
   }
 
   fn default_run(args: &str) {
-    let mut args: Vec<_> = std::iter::once("sg".into())
+    let mut args: Vec<_> = std::iter::once("ast-grep".into())
       .chain(args.split(' ').map(|s| s.to_string()))
       .collect();
     insert_default_run(&mut args);
@@ -214,9 +209,9 @@ mod test_cli {
 
   #[test]
   fn test_no_arg_run() {
-    let ret = main_with_args(["sg".to_owned()].into_iter());
+    let ret = main_with_args(["ast-grep".to_owned()].into_iter());
     let err = ret.unwrap_err();
-    assert!(err.to_string().contains("sg [OPTIONS] <COMMAND>"));
+    assert!(err.to_string().contains("ast-grep [OPTIONS] <COMMAND>"));
   }
   #[test]
   fn test_default_subcommand() {

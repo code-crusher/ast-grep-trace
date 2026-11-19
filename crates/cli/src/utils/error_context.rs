@@ -304,7 +304,7 @@ impl ErrorMessage {
       ),
       CannotInferShell => Self::new(
         "Can not infer which shell to generate completions.",
-        "Either specify shell flavor by `sg completions [SHELL]` or set correct `SHELL` environment.",
+        "Either specify shell flavor by `ast-grep completions [SHELL]` or set correct `SHELL` environment.",
         CLI_USAGE,
       ),
       TrustRequiresInteractiveTerminal => Self::new(
@@ -333,7 +333,7 @@ pub fn exit_with_error(error: Error) -> Result<ExitCode> {
     eprintln!("{error_fmt}");
     std::process::exit(e.exit_code())
   }
-  // A closed pipe (e.g. `sg ... | head`) is not an error.
+  // A closed pipe (e.g. `ast-grep ... | head`) is not an error.
   // See: https://github.com/ast-grep/ast-grep/pull/2887
   if error
     .chain()
